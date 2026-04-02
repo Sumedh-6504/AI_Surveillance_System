@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Models
+models/*.pt
+models/*.onnx
+!models/.gitkeep
+
+# Data
+data/*.mp4
+data/*.avi
+!data/.gitkeep
+
+# Database
+*.db
+*.sqlite3
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config with secrets
+.env
+configs/local.yaml

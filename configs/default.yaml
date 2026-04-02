@@ -1,0 +1,70 @@
+camera:
+  # Use "0" for USB webcam, or RTSP URL for IP camera
+  rtsp_url: "0"
+  fps: 15
+  resolution: [1280, 720]
+
+detection:
+  yolo_model: "yolov8n.onnx"
+  use_openvino: false
+  confidence_threshold: 0.5
+  iou_threshold: 0.45
+  classes:
+    - person
+    - vehicle
+    - bag
+    - knife
+    - gun
+
+behavior:
+  # Primary backend: VL-JEPA2 (facebook/vjepa2-vitl-fpc64-256, 0.7B params)
+  # Note: VL-JEPA2 disabled - using rule-based analysis (YOLO + DeepSORT) instead
+  backend: "rule_based"
+  model_name: "facebook/vjepa2-vitl-fpc64-256"
+  use_quantization: false    # Disabled
+  use_openvino: false
+  input_resolution: 224
+  confidence_threshold: 0.6
+
+tracking:
+  max_age: 30
+  min_hits: 3
+  iou_threshold: 0.3
+
+alerting:
+  email:
+    enabled: false  # Enable after setting password below
+    smtp_server: "smtp.gmail.com"
+    smtp_port: 587
+    sender: "alerts@example.com"
+    password: ""  # Set your Gmail app password
+    recipients:
+      - "admin@example.com"
+  sms:
+    enabled: false
+    twilio_account_sid: ""
+    twilio_auth_token: ""
+    from_number: ""
+    to_numbers: []
+  webhook:
+    enabled: false
+    url: ""
+
+rules:
+  loitering:
+    enabled: true
+    threshold_seconds: 60
+  crowd:
+    enabled: true
+    threshold_people: 10
+  weapon:
+    enabled: true
+  fight:
+    enabled: true
+
+optimization:
+  max_cameras: 1
+  frame_skip: 2  # Reduced for VL-JEPA2
+  batch_size: 1
+  cpu_workers: 1
+  gc_interval: 100  # Garbage collect every N frames
