@@ -8,7 +8,7 @@ from typing import Optional
 from src.config import load_config
 from src.camera import CameraCapture, FrameProcessor
 from src.detection import YOLOv8Detector
-from src.detection.behavior_vjepa import BehaviorAnalyzer
+from src.detection.behavior_vjepa import BehaviorAnalyzer,BehaviorBackend
 from src.tracking.deepsort import DeepSORTTracker
 from src.tracking.trajectory import TrajectoryAnalyzer
 from src.detection.rules import RuleEngine
@@ -47,9 +47,9 @@ class SurveillanceSystem:
             iou_threshold=det_cfg.iou_threshold
         )
 
-        # Initialize behavior analyzer — using MediaPipe/rule-based backend.
-        # (VL-JEPA2 disabled due to API incompatibility with single-frame input)
-        self.behavior_analyzer = BehaviorAnalyzer()
+        # Initialize behavior analyzer using hybrid backend
+        # Hybrid = rule-based + VL-JEPA2 temporal clip support
+        self.behavior_analyzer = BehaviorAnalyzer(backend=BehaviorBackend.HYBRID)
 
         # Initialize tracking
         track_cfg = self.config.tracking
