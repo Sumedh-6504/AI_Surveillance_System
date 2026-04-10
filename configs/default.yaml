@@ -19,7 +19,7 @@ detection:
 behavior:
   # Primary backend: VL-JEPA2 (facebook/vjepa2-vitl-fpc64-256, 0.7B params)
   # Note: VL-JEPA2 disabled - using rule-based analysis (YOLO + DeepSORT) instead
-  backend: "rule_based"
+  backend: "hybrid"
   model_name: "facebook/vjepa2-vitl-fpc64-256"
   use_quantization: false    # Disabled
   use_openvino: false
