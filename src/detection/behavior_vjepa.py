@@ -10,6 +10,7 @@ For 16GB RAM systems with Intel UHD Graphics, MediaPipe is recommended.
 VL-JEPA2 can be enabled for more accurate behavior analysis but requires
 more memory and has higher latency.
 """
+
 import numpy as np
 from typing import List, Dict, Any, Optional
 from collections import deque
@@ -20,6 +21,7 @@ class BehaviorBackend(Enum):
     MEDIAPIPE = "mediapipe"
     VLJEPA2 = "vljepa2"
     RULE_BASED = "rule_based"
+    HYBRID = "hybrid"
 
 
 class BehaviorAnalyzer:
@@ -31,8 +33,11 @@ class BehaviorAnalyzer:
     For 8GB VRAM systems: Can optionally use VL-JEPA2
     """
 
-    def __init__(self, backend: BehaviorBackend = BehaviorBackend.MEDIAPIPE,
-                 use_vjepa2: bool = False):
+    def __init__(
+        self,
+        backend: BehaviorBackend = BehaviorBackend.MEDIAPIPE,
+        use_vjepa2: bool = False,
+    ):
         self.backend = backend
         self.use_vjepa2 = use_vjepa2
 
@@ -47,17 +52,22 @@ class BehaviorAnalyzer:
         self.pose_history: deque = deque(maxlen=16)
         self.velocity_history: deque = deque(maxlen=8)
 
+        self.frame_buffer: deque = deque(maxlen=16)
+        self.frame_skip = 2
+        self.frame_counter = 0
+
     def _init_mediapipe(self):
         """Initialize MediaPipe Pose (recommended for 16GB RAM)."""
         try:
             import mediapipe as mp
+
             self.mp_pose = mp.solutions.pose
             self.pose = self.mp_pose.Pose(
                 static_image_mode=False,
                 model_complexity=0,  # Lite model for CPU
                 enable_segmentation=False,
                 min_detection_confidence=0.5,
-                min_tracking_confidence=0.5
+                min_tracking_confidence=0.5,
             )
             self.backend = BehaviorBackend.MEDIAPIPE
             print("Behavior Analyzer: Using MediaPipe backend (CPU-optimized)")
@@ -84,6 +94,7 @@ class BehaviorAnalyzer:
 
             # Check if torch is available
             import torch
+
             if torch.cuda.is_available():
                 vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                 if vram_gb < 6:
@@ -113,9 +124,9 @@ class BehaviorAnalyzer:
         self.backend = BehaviorBackend.RULE_BASED
         print("Behavior Analyzer: Using rule-based backend (lightweight)")
 
-    def analyze(self, frame: np.ndarray,
-                detections: List[Dict],
-                tracks: List[Dict] = None) -> List[Dict[str, Any]]:
+    def analyze(
+        self, frame: np.ndarray, detections: List[Dict], tracks: List[Dict] = None
+    ) -> List[Dict[str, Any]]:
         """
         Analyze behavior from frame and detections.
 
@@ -129,22 +140,50 @@ class BehaviorAnalyzer:
         """
         behaviors = []
 
+        self.frame_counter += 1
+        self.frame_buffer.append(frame)
+
         if self.backend == BehaviorBackend.MEDIAPIPE:
             behaviors = self._analyze_mediapipe(frame, detections)
+
         elif self.backend == BehaviorBackend.VLJEPA2:
-            behaviors = self._analyze_vjepa2(frame, detections, tracks)
+            if (
+                len(self.frame_buffer) == 16
+                and self.frame_counter % self.frame_skip == 0
+            ):
+                clip = list(self.frame_buffer)
+                behaviors = self._analyze_vjepa2(clip, detections, tracks)
+            else:
+                behaviors = []
+
+        elif self.backend == BehaviorBackend.HYBRID:
+            behaviors = self._analyze_rule_based(detections, tracks)
+
+            if (
+                len(self.frame_buffer) == 16
+                and self.frame_counter % self.frame_skip == 0
+            ):
+                clip = list(self.frame_buffer)
+                try:
+                    vjepa_behaviors = self._analyze_vjepa2(clip, detections, tracks)
+                    behaviors.extend(vjepa_behaviors)
+                except Exception as e:
+                    print(f"VL-JEPA2 skipped: {e}")
+
         else:
             behaviors = self._analyze_rule_based(detections, tracks)
 
         return behaviors
 
-    def _analyze_mediapipe(self, frame: np.ndarray,
-                           detections: List[Dict]) -> List[Dict[str, Any]]:
+    def _analyze_mediapipe(
+        self, frame: np.ndarray, detections: List[Dict]
+    ) -> List[Dict[str, Any]]:
         """MediaPipe-based behavior analysis."""
         behaviors = []
 
         try:
             import cv2
+
             # Convert to RGB for MediaPipe
             rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             results = self.pose.process(rgb)
@@ -174,28 +213,30 @@ class BehaviorAnalyzer:
 
         return behaviors
 
-    def _analyze_vjepa2(self, frame: np.ndarray,
-                        detections: List[Dict],
-                        tracks: List[Dict]) -> List[Dict[str, Any]]:
+    def _analyze_vjepa2(
+        self, clip: List[np.ndarray], detections: List[Dict], tracks: List[Dict]
+    ) -> List[Dict[str, Any]]:
         """
-        VL-JEPA2 based behavior analysis.
+        VL-JEPA2 based behavior analysis using temporal clip input.
 
-        This is a placeholder for when VL-JEPA2 is properly integrated.
-        The approach would be:
-        1. Use VL-JEPA2 to encode frame + detection crops
-        2. Classify behavior from embeddings
-        3. Track behavior over time
-        """
+        clip = buffered sequence of frames (16 frames recommended)
+
+        Placeholder until full VL-JEPA2 inference is connected."""
+
         behaviors = []
 
-        # Placeholder - would need actual VL-JEPA2 integration
-        # For now, fall back to simpler analysis
+        # Safety: VL-JEPA2 needs temporal clip
+        if len(clip) < 16:
+            return behaviors
+
+        # Placeholder fallback until real inference is added
         behaviors.extend(self._analyze_rule_based(detections, tracks))
 
         return behaviors
 
-    def _analyze_rule_based(self, detections: List[Dict],
-                            tracks: List[Dict] = None) -> List[Dict[str, Any]]:
+    def _analyze_rule_based(
+        self, detections: List[Dict], tracks: List[Dict] = None
+    ) -> List[Dict[str, Any]]:
         """Rule-based behavior analysis using detection patterns."""
         behaviors = []
 
@@ -204,23 +245,25 @@ class BehaviorAnalyzer:
 
         # Crowd detection
         if people_count >= 10:
-            behaviors.append({
-                "behavior": "crowd_formation",
-                "confidence": min(1.0, people_count / 15),
-                "people_count": people_count
-            })
+            behaviors.append(
+                {
+                    "behavior": "crowd_formation",
+                    "confidence": min(1.0, people_count / 15),
+                    "people_count": people_count,
+                }
+            )
 
         # Check for weapons
         weapon_classes = ["knife", "gun", "weapon"]
-        weapons_detected = any(
-            d.get("class") in weapon_classes for d in detections
-        )
+        weapons_detected = any(d.get("class") in weapon_classes for d in detections)
         if weapons_detected:
-            behaviors.append({
-                "behavior": "weapon_present",
-                "confidence": 0.95,
-                "severity": "critical"
-            })
+            behaviors.append(
+                {
+                    "behavior": "weapon_present",
+                    "confidence": 0.95,
+                    "severity": "critical",
+                }
+            )
 
         # Analyze tracks for movement patterns
         if tracks:
@@ -242,9 +285,7 @@ class BehaviorAnalyzer:
 
             # Calculate arm angle
             angle = self._calculate_angle(
-                (shoulder.x, shoulder.y),
-                (elbow.x, elbow.y),
-                (wrist.x, wrist.y)
+                (shoulder.x, shoulder.y), (elbow.x, elbow.y), (wrist.x, wrist.y)
             )
 
             # Raised arms = acute angle at elbow
@@ -252,7 +293,7 @@ class BehaviorAnalyzer:
                 return {
                     "behavior": "raised_arms",
                     "confidence": 1.0 - (angle / 90),
-                    "angle": angle
+                    "angle": angle,
                 }
         except Exception:
             pass
@@ -279,7 +320,7 @@ class BehaviorAnalyzer:
                 return {
                     "behavior": "fighting_stance",
                     "confidence": min(1.0, hip_distance),
-                    "hip_width": hip_distance
+                    "hip_width": hip_distance,
                 }
         except Exception:
             pass
@@ -306,14 +347,18 @@ class BehaviorAnalyzer:
             first_box = history[0]
             last_box = history[-1]
 
-            first_center = ((first_box[0] + first_box[2]) / 2,
-                           (first_box[1] + first_box[3]) / 2)
-            last_center = ((last_box[0] + last_box[2]) / 2,
-                          (last_box[1] + last_box[3]) / 2)
+            first_center = (
+                (first_box[0] + first_box[2]) / 2,
+                (first_box[1] + first_box[3]) / 2,
+            )
+            last_center = (
+                (last_box[0] + last_box[2]) / 2,
+                (last_box[1] + last_box[3]) / 2,
+            )
 
             distance = np.sqrt(
-                (last_center[0] - first_center[0]) ** 2 +
-                (last_center[1] - first_center[1]) ** 2
+                (last_center[0] - first_center[0]) ** 2
+                + (last_center[1] - first_center[1]) ** 2
             )
 
             # High velocity = running
@@ -321,7 +366,7 @@ class BehaviorAnalyzer:
                 return {
                     "behavior": "running",
                     "confidence": min(1.0, distance / 200),
-                    "track_id": track.get("track_id")
+                    "track_id": track.get("track_id"),
                 }
 
         return None
@@ -329,6 +374,7 @@ class BehaviorAnalyzer:
     def _calculate_angle(self, a: tuple, b: tuple, c: tuple) -> float:
         """Calculate angle between three points."""
         import numpy as np
+
         a = np.array(a)
         b = np.array(b)
         c = np.array(c)
@@ -343,14 +389,14 @@ class BehaviorAnalyzer:
 
     def release(self):
         """Release resources."""
-        if hasattr(self, 'pose') and self.pose is not None:
+        if hasattr(self, "pose") and self.pose is not None:
             self.pose.close()
 
 
 # Factory function for easy initialization
-def create_behavior_analyzer(system_ram_gb: int = 16,
-                             vram_gb: int = 0,
-                             prefer_vjepa2: bool = False) -> BehaviorAnalyzer:
+def create_behavior_analyzer(
+    system_ram_gb: int = 16, vram_gb: int = 0, prefer_vjepa2: bool = False
+) -> BehaviorAnalyzer:
     """
     Create behavior analyzer optimized for system specs.
 

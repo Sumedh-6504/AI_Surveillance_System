@@ -143,48 +143,61 @@ def save_event(db_path: str, event_type: str, severity: str,
         metadata: Additional metadata
 
     Returns:
-        Event ID
+        Event ID (0 if failed)
     """
-    with get_connection(db_path) as conn:
-        cursor = conn.cursor()
+    try:
+        with get_connection(db_path) as conn:
+            cursor = conn.cursor()
 
-        # Insert event
-        cursor.execute("""
-            INSERT INTO events (timestamp, event_type, severity, camera_id,
-                               frame_id, rule_name, detection_count, metadata)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            datetime.now().timestamp(),
-            event_type,
-            severity,
-            camera_id,
-            frame_id,
-            rule_name,
-            len(detections) if detections else 0,
-            json.dumps(metadata) if metadata else None
-        ))
+            # Insert event
+            cursor.execute("""
+                INSERT INTO events (timestamp, event_type, severity, camera_id,
+                                   frame_id, rule_name, detection_count, metadata)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                datetime.now().timestamp(),
+                event_type,
+                severity,
+                camera_id,
+                frame_id,
+                rule_name,
+                len(detections) if detections else 0,
+                json.dumps(metadata) if metadata else None
+            ))
 
-        event_id = cursor.lastrowid
+            event_id = cursor.lastrowid
 
-        # Insert detections
-        if detections:
-            for det in detections:
-                bbox = det.get("bbox", [0, 0, 0, 0])
-                cursor.execute("""
-                    INSERT INTO detections (event_id, track_id, class,
-                                           confidence, bbox_x1, bbox_y1,
-                                           bbox_x2, bbox_y2)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    event_id,
-                    det.get("track_id"),
-                    det.get("class", "unknown"),
-                    det.get("confidence", 0.0),
-                    bbox[0], bbox[1], bbox[2], bbox[3]
-                ))
+            # Insert detections
+            if detections:
+                for det in detections:
+                    # Normalize bbox - ensure it's a list of 4 floats
+                    bbox = det.get("bbox")
+                    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                        bbox = [0.0, 0.0, 0.0, 0.0]
+                    else:
+                        try:
+                            bbox = [float(x) for x in bbox]
+                        except (TypeError, ValueError):
+                            bbox = [0.0, 0.0, 0.0, 0.0]
 
-        conn.commit()
-        return event_id
+                    cursor.execute("""
+                        INSERT INTO detections (event_id, track_id, class,
+                                               confidence, bbox_x1, bbox_y1,
+                                               bbox_x2, bbox_y2)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """, (
+                        event_id,
+                        det.get("track_id"),
+                        det.get("class", "unknown"),
+                        float(det.get("confidence", 0.0)),
+                        bbox[0], bbox[1], bbox[2], bbox[3]
+                    ))
+
+            conn.commit()
+            return event_id
+    except Exception as e:
+        print(f"Database error in save_event: {e}")
+        return 0
 
 
 def get_events(db_path: str, limit: int = 100,
