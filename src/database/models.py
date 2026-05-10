@@ -394,13 +394,15 @@ def cleanup_old_data(db_path: str, max_age_days: int = 7):
         cursor.execute("""
             DELETE FROM events WHERE timestamp < ?
         """, (cutoff,))
+        events_deleted = cursor.rowcount
 
         # Delete old tracks
         cursor.execute("""
             DELETE FROM tracks WHERE start_time < ?
         """, (cutoff,))
+        tracks_deleted = cursor.rowcount
 
-        deleted = cursor.rowcount
+        deleted = events_deleted + tracks_deleted
         conn.commit()
 
         return deleted

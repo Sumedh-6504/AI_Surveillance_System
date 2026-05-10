@@ -152,6 +152,13 @@ class AlertEngine:
         Returns:
             Number of alerts dispatched
         """
+        if not self.channels:
+            for alert in self.pending_alerts:
+                alert.dispatched = True
+                self.dispatched_ids.add(alert.id)
+            self.pending_alerts = []
+            return 0
+
         dispatched = 0
 
         for alert in self.pending_alerts:
