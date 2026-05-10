@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.detection.yolo import YOLOv8Detector
 from src.detection.rules import RuleEngine, Severity, DetectionRule
-from src.detection.behavior_vjepa import BehaviorAnalyzer
+from src.detection.behavior import BehaviorAnalyzer
 
 
 class TestYOLOv8Detector:
@@ -134,17 +134,25 @@ class TestBehaviorAnalyzer:
     def test_analyzer_initialization(self):
         """Test behavior analyzer initializes correctly."""
         analyzer = BehaviorAnalyzer()
-        if analyzer.backend.value == "mediapipe":
-            assert hasattr(analyzer, 'pose') and analyzer.pose is not None
+        assert analyzer.pose is not None
         assert len(analyzer.pose_history) == 0
 
     def test_angle_calculation(self):
         """Test angle calculation between points."""
         analyzer = BehaviorAnalyzer()
-        a = (0, 1)
-        b = (0, 0)
-        c = (1, 0)
+
+        # Create mock landmarks (90 degree angle)
+        class Point:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+
+        a = Point(0, 1)
+        b = Point(0, 0)
+        c = Point(1, 0)
+
         angle = analyzer._calculate_angle(a, b, c)
+
         # Should be approximately 90 degrees
         assert 85 < angle < 95
 
@@ -159,11 +167,28 @@ class TestBehaviorAnalyzer:
     def test_raise_arms_detection(self):
         """Test raised arms detection logic."""
         analyzer = BehaviorAnalyzer()
-        # Bent-elbow ∧-shape: shoulder and wrist on either side of a raised elbow
-        shoulder = (0.3, 0.5)
-        elbow = (0.4, 0.3)
-        wrist = (0.5, 0.5)
+
+        # Simulate raised arms (angle < 90)
+        class MockLandmark:
+            def __init__(self):
+                self.landmark = None
+
+            def __getitem__(self, key):
+                # Return points that would create acute angle
+                return Point(0, 0.5)
+
+        class Point:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+
+        # Test angle calculation directly
+        shoulder = Point(0.3, 0.4)
+        elbow = Point(0.3, 0.3)  # Raised
+        wrist = Point(0.3, 0.2)  # Above elbow
+
         angle = analyzer._calculate_angle(shoulder, elbow, wrist)
+
         # Acute angle indicates raised arms
         assert angle < 90
 

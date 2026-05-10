@@ -1,6 +1,5 @@
 """Unit tests for tracking modules."""
 import pytest
-import time
 import numpy as np
 from pathlib import Path
 import sys
@@ -41,8 +40,8 @@ class TestKalmanFilter:
 
         predicted = kf.predict()
         assert predicted is not None
-        # KalmanFilter.predict returns full state vector [x, y, vx, vy, w, h]
-        assert len(predicted) == 6
+        # Should return bbox format
+        assert len(predicted) == 4
 
 
 class TestTrack:

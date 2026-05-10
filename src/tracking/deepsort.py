@@ -197,7 +197,7 @@ class DeepSORTTracker:
                     "bbox": det["bbox"],
                     "class": det["class"],
                     "confidence": det["confidence"],
-                    "track_id": self.tracks[i].track_id
+                    "track_id": i
                 }
                 for i, det in enumerate(detections)
             ]
@@ -297,11 +297,24 @@ class DeepSORTTracker:
 
     def _get_results(self, detections: List[Dict],
                      tracks: List[Track]) -> List[Dict[str, Any]]:
-        """Get tracking results: tracks visible in the current frame and confirmed."""
+        """Get tracking results."""
         results = []
 
+        for track in tracks:
+            if track.age >= self.min_hits:
+                bbox = track.get_state()
+                if bbox is not None:
+                    results.append({
+                        "bbox": bbox,
+                        "class": track.cls,
+                        "confidence": track.confidence,
+                        "track_id": track.track_id,
+                        "history": list(track.history)
+                    })
+
+        # Also include new (tentative) detections not yet confirmed
         for track in self.tracks:
-            if track.consecutive_absence == 0 and track.age >= self.min_hits:
+            if track.age < self.min_hits and track.consecutive_absence == 0:
                 bbox = track.get_state()
                 if bbox is not None:
                     results.append({

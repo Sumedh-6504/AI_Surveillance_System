@@ -61,9 +61,8 @@ class BehaviorAnalyzer:
             )
             self.backend = BehaviorBackend.MEDIAPIPE
             print("Behavior Analyzer: Using MediaPipe backend (CPU-optimized)")
-        except (ImportError, AttributeError) as e:
-            # AttributeError covers mediapipe>=0.10.30 which removed mp.solutions
-            print(f"MediaPipe not available ({e}), falling back to rule-based")
+        except ImportError:
+            print("MediaPipe not available, falling back to rule-based")
             self._init_rule_based()
 
     def _init_vjepa2(self):
