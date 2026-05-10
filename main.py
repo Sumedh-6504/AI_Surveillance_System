@@ -8,7 +8,7 @@ from typing import Optional
 from src.config import load_config
 from src.camera import CameraCapture, FrameProcessor
 from src.detection import YOLOv8Detector
-from src.detection.behavior_vjepa import BehaviorAnalyzer
+from src.detection.behavior_vjepa import BehaviorAnalyzer,BehaviorBackend
 from src.tracking.deepsort import DeepSORTTracker
 from src.tracking.trajectory import TrajectoryAnalyzer
 from src.detection.rules import RuleEngine
@@ -47,9 +47,9 @@ class SurveillanceSystem:
             iou_threshold=det_cfg.iou_threshold
         )
 
-        # Initialize behavior analyzer — using MediaPipe/rule-based backend.
-        # (VL-JEPA2 disabled due to API incompatibility with single-frame input)
-        self.behavior_analyzer = BehaviorAnalyzer()
+        # Initialize behavior analyzer using hybrid backend
+        # Hybrid = rule-based + VL-JEPA2 temporal clip support
+        self.behavior_analyzer = BehaviorAnalyzer(backend=BehaviorBackend.HYBRID)
 
         # Initialize tracking
         track_cfg = self.config.tracking
@@ -199,17 +199,33 @@ class SurveillanceSystem:
         triggered_rules = self.rule_engine.evaluate(detections, behaviors, tracks)
 
         for rule in triggered_rules:
-            # Create alert
+            # Create alert (may return None due to rate limiting)
             alert = self.alert_engine.add_alert(
                 rule=rule,
                 detections=detections,
                 frame_id=self.frame_count
             )
 
-            print(f"DEBUG: Rule {rule.name} triggered, alert={alert}")
+            # Always save event to database, regardless of alert status
+            # This ensures we have a record even when alerts are rate-limited
+            try:
+                # Normalize detections: ensure bbox and required fields exist
+                normalized_detections = []
+                for det in detections:
+                    norm_det = {
+                        "class": det.get("class", "unknown"),
+                        "confidence": det.get("confidence", 0.0),
+                        "track_id": det.get("track_id"),
+                        "bbox": det.get("bbox", [0.0, 0.0, 0.0, 0.0])
+                    }
+                    # Ensure bbox is valid (4 floats)
+                    bbox = norm_det["bbox"]
+                    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+                        norm_det["bbox"] = [0.0, 0.0, 0.0, 0.0]
+                    else:
+                        norm_det["bbox"] = [float(x) for x in bbox]
+                    normalized_detections.append(norm_det)
 
-            if alert:
-                print(f"DEBUG: Saving event to database...")
                 event_id = save_event(
                     db_path=self.db_path,
                     event_type="alert",
@@ -217,9 +233,13 @@ class SurveillanceSystem:
                     camera_id="cam1",
                     frame_id=self.frame_count,
                     rule_name=rule.name,
-                    detections=detections
+                    detections=normalized_detections
                 )
-                print(f"DEBUG: Event saved with id={event_id}")
+                print(f"Event saved: rule={rule.name}, event_id={event_id}")
+            except Exception as e:
+                print(f"ERROR: Failed to save event to database: {e}")
+
+            if alert:
                 results["alerts"].append({
                     "rule": rule.name,
                     "severity": rule.severity.value
