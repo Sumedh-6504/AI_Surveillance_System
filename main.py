@@ -172,6 +172,9 @@ class SurveillanceSystem:
         # Run detection
         detections = self.detector.detect(processed)
 
+        # Scale coordinates from model input space (640x640) to original frame space
+        detections = self.frame_processor.scale_coords(detections, frame.shape)
+
         # Map class IDs to names
         class_names = ["person", "vehicle", "bag", "knife", "gun"]
         for det in detections:

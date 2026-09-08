@@ -40,6 +40,23 @@ class FrameProcessor:
 
         return batched
 
+    def scale_coords(self, detections: list, original_shape: tuple) -> list:
+        """Scale detection coordinates from model input space to original frame space."""
+        orig_h, orig_w = original_shape[:2]
+        scale_x = orig_w / self.input_size[0]
+        scale_y = orig_h / self.input_size[1]
+
+        for det in detections:
+            bbox = det["bbox"]
+            det["bbox"] = [
+                bbox[0] * scale_x,
+                bbox[1] * scale_y,
+                bbox[2] * scale_x,
+                bbox[3] * scale_y,
+            ]
+
+        return detections
+
     def draw_detections(self, frame: np.ndarray, detections: list) -> np.ndarray:
         """
         Draw detection boxes on frame.

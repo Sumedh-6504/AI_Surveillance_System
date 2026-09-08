@@ -57,25 +57,31 @@ class YOLOv8Detector:
         """Process YOLOv8 outputs to detection boxes."""
         results = []
 
-        for output in outputs[0]:
-            # Output format: [x1, y1, x2, y2, conf, cls_scores...]
-            bbox = output[:4]
-            conf = output[4]
-            cls_scores = output[5:]
+        # YOLOv8 output shape: (1, 4+num_classes, num_detections)
+        # Transpose to (num_detections, 4+num_classes)
+        predictions = outputs[0].T
+
+        for pred in predictions:
+            # First 4 values: cx, cy, w, h (center format)
+            cx, cy, w, h = pred[:4]
+            cls_scores = pred[4:]
+
+            cls = np.argmax(cls_scores)
+            conf = float(cls_scores[cls])
 
             if conf < self.confidence_threshold:
                 continue
 
-            cls = np.argmax(cls_scores)
-            cls_conf = cls_scores[cls]
-
-            if cls_conf < self.confidence_threshold:
-                continue
+            # Convert center format to corner format
+            x1 = cx - w / 2
+            y1 = cy - h / 2
+            x2 = cx + w / 2
+            y2 = cy + h / 2
 
             results.append({
-                "bbox": bbox,
+                "bbox": [x1, y1, x2, y2],
                 "class": int(cls),
-                "confidence": float(cls_conf)
+                "confidence": conf
             })
 
         # Apply NMS
