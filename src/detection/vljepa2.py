@@ -9,10 +9,13 @@ This model is optimized for 16GB RAM systems and can run with:
 Model: facebook/vjepa2-vitl-fpc64-256
 https://huggingface.co/facebook/vjepa2-vitl-fpc64-256
 """
+
 import numpy as np
 from typing import List, Dict, Any, Optional, Tuple
 from collections import deque
 import time
+import torch
+import cv2
 
 
 class VLJEPA2Analyzer:
@@ -39,7 +42,7 @@ class VLJEPA2Analyzer:
         "crowding",
         "weapon_display",
         "falling",
-        "suspicious_activity"
+        "suspicious_activity",
     ]
 
     def __init__(
@@ -48,7 +51,7 @@ class VLJEPA2Analyzer:
         device: str = "auto",
         use_quantization: bool = True,
         input_resolution: int = 224,
-        confidence_threshold: float = 0.6
+        confidence_threshold: float = 0.6,
     ):
         """
         Initialize VL-JEPA2 analyzer.
@@ -86,6 +89,7 @@ class VLJEPA2Analyzer:
         """Auto-select best available device."""
         try:
             import torch
+
             if torch.cuda.is_available():
                 vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
                 print(f"CUDA available with {vram_gb:.1f}GB VRAM")
@@ -101,6 +105,7 @@ class VLJEPA2Analyzer:
         # Try OpenVINO for Intel UHD Graphics
         try:
             from openvino.runtime import Core
+
             core = Core()
             if core.available_devices:
                 print(f"OpenVINO available: {core.available_devices}")
@@ -131,7 +136,9 @@ class VLJEPA2Analyzer:
             # Load model with optimizations
             load_kwargs = {
                 "pretrained_model_name_or_path": self.model_name,
-                "torch_dtype": torch.float16 if self.device == "cuda" else torch.float32,
+                "torch_dtype": (
+                    torch.float16 if self.device == "cuda" else torch.float32
+                ),
                 "low_cpu_mem_usage": True,
             }
 
@@ -139,6 +146,7 @@ class VLJEPA2Analyzer:
             if self.use_quantization:
                 try:
                     from transformers import BitsAndBytesConfig
+
                     load_kwargs["quantization_config"] = BitsAndBytesConfig(
                         load_in_8bit=True,
                         llm_int8_threshold=6.0,
@@ -188,13 +196,17 @@ class VLJEPA2Analyzer:
     def _fallback_to_mediapipe(self):
         """Fallback to MediaPipe if VL-JEPA2 fails to load."""
         from .behavior_vjepa import BehaviorAnalyzer
+
         self.mediapipe_analyzer = BehaviorAnalyzer()
         self.device = "mediapipe_fallback"
         print("Using MediaPipe fallback")
 
-    def analyze(self, frame: np.ndarray,
-                detections: List[Dict] = None,
-                tracks: List[Dict] = None) -> List[Dict[str, Any]]:
+    def analyze(
+        self,
+        frame: np.ndarray,
+        detections: List[Dict] = None,
+        tracks: List[Dict] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Analyze frame for suspicious behaviors.
 
@@ -244,40 +256,43 @@ class VLJEPA2Analyzer:
 
         return behaviors
 
-    def _predict_behavior(self, frame: np.ndarray) -> Optional[Dict[str, Any]]:
-        """Predict behavior from single frame using VL-JEPA2."""
-        import torch
-        import cv2
+    def _predict_behavior(self, clip: List[np.ndarray]) -> Optional[Dict[str, Any]]:
+        """
+        Predict behavior using buffered clip input (currently uses latest frame).
+        """
+
+        # Safety check
+        if len(clip) < 16:
+            return None
+
+        # Temporary approach: use latest frame until full temporal VL-JEPA2 is wired
+        frame = clip[-1]
 
         # Preprocess frame
         rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
 
-        # Resize for efficiency (224x224 for 16GB RAM)
+        # Resize for efficiency
         if self.input_resolution != frame.shape[0]:
-            rgb_frame = cv2.resize(rgb_frame, (self.input_resolution, self.input_resolution))
+            rgb_frame = cv2.resize(
+                rgb_frame, (self.input_resolution, self.input_resolution)
+            )
 
-        # Process with VL-JEPA2 processor
-        inputs = self.processor(
-            images=rgb_frame,
-            return_tensors="pt",
-            padding=True
-        )
+        # Process input
+        inputs = self.processor(images=rgb_frame, return_tensors="pt", padding=True)
 
         # Move to device
         if self.device == "cuda":
             inputs = {k: v.to("cuda") for k, v in inputs.items()}
 
-        # Run inference
+        # Inference
         with torch.no_grad():
             outputs = self.model(**inputs)
 
-            # Get embeddings
-            if hasattr(outputs, 'last_hidden_state'):
+            if hasattr(outputs, "last_hidden_state"):
                 embeddings = outputs.last_hidden_state
             else:
                 embeddings = outputs[0]
 
-            # Classify behavior from embeddings
             behavior = self._classify_from_embeddings(embeddings)
 
         return behavior
@@ -308,7 +323,7 @@ class VLJEPA2Analyzer:
                 "behavior": self.BEHAVIOR_CLASSES[top_idx],
                 "confidence": float(top_score),
                 "all_scores": dict(zip(self.BEHAVIOR_CLASSES, scores)),
-                "model": "vljepa2"
+                "model": "vljepa2",
             }
 
         return None
@@ -363,13 +378,14 @@ class VLJEPA2Analyzer:
                     "behavior": f"sustained_{behavior}",
                     "confidence": min(1.0, count / 8),
                     "duration_frames": count,
-                    "model": "vljepa2_temporal"
+                    "model": "vljepa2_temporal",
                 }
 
         return None
 
-    def _rule_based_analysis(self, detections: List[Dict],
-                             tracks: List[Dict]) -> List[Dict[str, Any]]:
+    def _rule_based_analysis(
+        self, detections: List[Dict], tracks: List[Dict]
+    ) -> List[Dict[str, Any]]:
         """Supplement VL-JEPA2 with rule-based analysis."""
         behaviors = []
 
@@ -377,21 +393,25 @@ class VLJEPA2Analyzer:
             # Weapon detection
             weapon_classes = ["knife", "gun", "weapon"]
             if any(d.get("class") in weapon_classes for d in detections):
-                behaviors.append({
-                    "behavior": "weapon_detected",
-                    "confidence": 0.95,
-                    "source": "rule_based"
-                })
+                behaviors.append(
+                    {
+                        "behavior": "weapon_detected",
+                        "confidence": 0.95,
+                        "source": "rule_based",
+                    }
+                )
 
             # Crowd detection
             people_count = sum(1 for d in detections if d.get("class") == "person")
             if people_count >= 10:
-                behaviors.append({
-                    "behavior": "crowd_formation",
-                    "confidence": min(1.0, people_count / 15),
-                    "people_count": people_count,
-                    "source": "rule_based"
-                })
+                behaviors.append(
+                    {
+                        "behavior": "crowd_formation",
+                        "confidence": min(1.0, people_count / 15),
+                        "people_count": people_count,
+                        "source": "rule_based",
+                    }
+                )
 
         if tracks:
             # Analyze movement speed
@@ -401,15 +421,17 @@ class VLJEPA2Analyzer:
                     first = history[0]
                     last = history[-1]
                     distance = np.sqrt(
-                        (last[0] - first[0])**2 + (last[1] - first[1])**2
+                        (last[0] - first[0]) ** 2 + (last[1] - first[1]) ** 2
                     )
                     if distance > 150:  # Fast movement
-                        behaviors.append({
-                            "behavior": "rapid_movement",
-                            "confidence": min(1.0, distance / 200),
-                            "track_id": track.get("track_id"),
-                            "source": "rule_based"
-                        })
+                        behaviors.append(
+                            {
+                                "behavior": "rapid_movement",
+                                "confidence": min(1.0, distance / 200),
+                                "track_id": track.get("track_id"),
+                                "source": "rule_based",
+                            }
+                        )
 
         return behaviors
 
@@ -430,7 +452,7 @@ class VLJEPA2Analyzer:
 def create_vljepa2_analyzer(
     use_quantization: bool = True,
     use_openvino: bool = False,
-    input_resolution: int = 224
+    input_resolution: int = 224,
 ) -> VLJEPA2Analyzer:
     """
     Create VL-JEPA2 analyzer optimized for 16GB RAM systems.
@@ -449,6 +471,7 @@ def create_vljepa2_analyzer(
     if use_openvino:
         try:
             from openvino.runtime import Core
+
             core = Core()
             if "GPU" in core.available_devices:
                 device = "openvino"
@@ -459,6 +482,7 @@ def create_vljepa2_analyzer(
     # Try CUDA
     try:
         import torch
+
         if torch.cuda.is_available() and device != "openvino":
             device = "cuda"
             print(f"Using CUDA GPU: {torch.cuda.get_device_name(0)}")
@@ -469,5 +493,5 @@ def create_vljepa2_analyzer(
         model_name="facebook/vjepa2-vitl-fpc64-256",
         device=device,
         use_quantization=use_quantization,
-        input_resolution=input_resolution
+        input_resolution=input_resolution,
     )
