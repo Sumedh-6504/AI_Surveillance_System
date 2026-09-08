@@ -121,7 +121,9 @@ class BehaviorAnalyzer:
     def _init_rule_based(self):
         """Initialize simple rule-based behavior detection."""
         self.backend = BehaviorBackend.RULE_BASED
+        self.pose = None
         print("Behavior Analyzer: Using rule-based backend (lightweight)")
+
 
     def analyze(
         self, frame: np.ndarray, detections: List[Dict], tracks: List[Dict] = None
@@ -370,21 +372,27 @@ class BehaviorAnalyzer:
 
         return None
 
-    def _calculate_angle(self, a: tuple, b: tuple, c: tuple) -> float:
+    def _calculate_angle(self, a, b, c) -> float:
         """Calculate angle between three points."""
         import numpy as np
 
-        a = np.array(a)
-        b = np.array(b)
-        c = np.array(c)
+        pa = np.array([a.x, a.y]) if hasattr(a, 'x') else np.array(a)
+        pb = np.array([b.x, b.y]) if hasattr(b, 'x') else np.array(b)
+        pc = np.array([c.x, c.y]) if hasattr(c, 'x') else np.array(c)
 
-        ba = a - b
-        bc = c - b
+        ba = pa - pb
+        bc = pc - pb
 
-        cosine_angle = np.dot(ba, bc) / (np.linalg.norm(ba) * np.linalg.norm(bc))
+        norm_ba = np.linalg.norm(ba)
+        norm_bc = np.linalg.norm(bc)
+        if norm_ba == 0 or norm_bc == 0:
+            return 0.0
+
+        cosine_angle = np.dot(ba, bc) / (norm_ba * norm_bc)
         angle = np.arccos(np.clip(cosine_angle, -1.0, 1.0))
 
-        return np.degrees(angle)
+        return float(np.degrees(angle))
+
 
     def release(self):
         """Release resources."""

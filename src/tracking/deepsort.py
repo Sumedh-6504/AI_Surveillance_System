@@ -197,9 +197,9 @@ class DeepSORTTracker:
                     "bbox": det["bbox"],
                     "class": det["class"],
                     "confidence": det["confidence"],
-                    "track_id": i
+                    "track_id": track.track_id
                 }
-                for i, det in enumerate(detections)
+                for track, det in zip(self.tracks, detections)
             ]
 
         # Predict track positions
@@ -217,10 +217,15 @@ class DeepSORTTracker:
                 track.mark_missed()
             # Create new tracks for detections
             for det in detections:
-                track = Track(self.next_id, det["bbox"])
+                track = Track(
+                    self.next_id, det["bbox"],
+                    cls=det.get("class", "person"),
+                    confidence=det.get("confidence", 1.0)
+                )
                 self.tracks.append(track)
                 self.next_id += 1
             return self._get_results(detections, valid_tracks)
+
 
         pred_boxes = np.array(pred_boxes)
 
@@ -297,11 +302,13 @@ class DeepSORTTracker:
 
     def _get_results(self, detections: List[Dict],
                      tracks: List[Track]) -> List[Dict[str, Any]]:
-        """Get tracking results."""
+        """Get tracking results for active tracks in current frame."""
         results = []
+        seen_ids = set()
 
+        # Confirmed tracks seen in current frame
         for track in tracks:
-            if track.age >= self.min_hits:
+            if track.age >= self.min_hits and track.consecutive_absence == 0:
                 bbox = track.get_state()
                 if bbox is not None:
                     results.append({
@@ -311,10 +318,11 @@ class DeepSORTTracker:
                         "track_id": track.track_id,
                         "history": list(track.history)
                     })
+                    seen_ids.add(track.track_id)
 
         # Also include new (tentative) detections not yet confirmed
         for track in self.tracks:
-            if track.age < self.min_hits and track.consecutive_absence == 0:
+            if track.track_id not in seen_ids and track.consecutive_absence == 0:
                 bbox = track.get_state()
                 if bbox is not None:
                     results.append({
@@ -324,8 +332,10 @@ class DeepSORTTracker:
                         "track_id": track.track_id,
                         "history": list(track.history)
                     })
+                    seen_ids.add(track.track_id)
 
         return results
+
 
     def get_all_tracks(self) -> List[Dict[str, Any]]:
         """Get all active tracks."""
