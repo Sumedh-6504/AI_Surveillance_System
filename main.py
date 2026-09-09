@@ -175,11 +175,21 @@ class SurveillanceSystem:
         # Scale coordinates from model input space (640x640) to original frame space
         detections = self.frame_processor.scale_coords(detections, frame.shape)
 
-        # Map class IDs to names
+        # Map class IDs to names (supporting standard COCO YOLOv8 class indices)
+        coco_names = {
+            0: "person", 1: "bicycle", 2: "car", 3: "motorcycle", 5: "bus", 7: "truck",
+            24: "backpack", 26: "handbag", 28: "suitcase", 43: "knife", 76: "scissors"
+        }
         class_names = ["person", "vehicle", "bag", "knife", "gun"]
         for det in detections:
-            cls_id = det.get("class", 0)
-            det["class"] = class_names[cls_id] if cls_id < len(class_names) else "unknown"
+            cls_val = det.get("class", 0)
+            if isinstance(cls_val, int):
+                if cls_val in coco_names:
+                    det["class"] = coco_names[cls_val]
+                elif cls_val < len(class_names):
+                    det["class"] = class_names[cls_val]
+                else:
+                    det["class"] = "unknown"
 
         results["detections"] = detections
 
@@ -198,8 +208,10 @@ class SurveillanceSystem:
         self.trajectory_analyzer.cleanup(active_track_ids)
         results["alerts"].extend(trajectory_alerts)
 
-        # Evaluate rules
-        triggered_rules = self.rule_engine.evaluate(detections, behaviors, tracks)
+        # Evaluate rules (include both behavior and trajectory detections)
+        all_behaviors = behaviors + trajectory_alerts
+        triggered_rules = self.rule_engine.evaluate(detections, all_behaviors, tracks)
+
 
         for rule in triggered_rules:
             # Create alert (may return None due to rate limiting)

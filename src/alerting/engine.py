@@ -158,6 +158,11 @@ class AlertEngine:
             if alert.dispatched or alert.id in self.dispatched_ids:
                 continue
 
+            if not self.channels:
+                alert.dispatched = True
+                self.dispatched_ids.add(alert.id)
+                continue
+
             success = self._dispatch_alert(alert)
             if success:
                 alert.dispatched = True
@@ -171,6 +176,7 @@ class AlertEngine:
         ]
 
         return dispatched
+
 
     def _dispatch_alert(self, alert: Alert) -> bool:
         """Dispatch a single alert through all channels."""

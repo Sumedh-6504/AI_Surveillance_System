@@ -10,7 +10,8 @@ import math
 import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.database.models import get_events, get_statistics, cleanup_old_data
+from src.database.models import init_db, get_events, get_statistics, cleanup_old_data
+
 
 
 st.set_page_config(
@@ -394,6 +395,7 @@ def time_ago(ts: float) -> str:
 @st.cache_data(ttl=5)
 def fetch_events(db_path: str, limit: int = 100) -> list:
     try:
+        init_db(db_path)
         return get_events(db_path, limit=limit)
     except Exception as e:
         st.error(f"Failed to fetch events: {e}")
@@ -403,12 +405,14 @@ def fetch_events(db_path: str, limit: int = 100) -> list:
 @st.cache_data(ttl=10)
 def fetch_statistics(db_path: str) -> dict:
     try:
+        init_db(db_path)
         now = time.time()
         hour_ago = now - 3600
         return get_statistics(db_path, start_time=hour_ago)
     except Exception as e:
         st.error(f"Failed to fetch statistics: {e}")
         return {}
+
 
 
 def compute_threat_level(critical: int, high: int, medium: int, low: int) -> tuple:
@@ -589,6 +593,8 @@ def build_timeline(events: list) -> None:
 
 def main():
     db_path = "data/surveillance.db"
+    init_db(db_path)
+
 
     # --- Sidebar (collapsed by default) ---
     with st.sidebar:

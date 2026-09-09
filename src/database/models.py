@@ -359,12 +359,13 @@ def get_statistics(db_path: str,
         """, params)
         total_events = cursor.fetchone()[0]
 
-        # Events by type
+        # Events by type/rule
         cursor.execute(f"""
-            SELECT event_type, COUNT(*) FROM events
-            WHERE 1=1 {time_filter} GROUP BY event_type
+            SELECT COALESCE(rule_name, event_type), COUNT(*) FROM events
+            WHERE 1=1 {time_filter} GROUP BY COALESCE(rule_name, event_type)
         """, params)
-        by_type = {r[0]: r[1] for r in cursor.fetchall()}
+        by_type = {r[0]: r[1] for r in cursor.fetchall() if r[0]}
+
 
         # Events by severity
         cursor.execute(f"""
@@ -407,13 +408,15 @@ def cleanup_old_data(db_path: str, max_age_days: int = 7):
         cursor.execute("""
             DELETE FROM events WHERE timestamp < ?
         """, (cutoff,))
+        deleted_events = cursor.rowcount
 
         # Delete old tracks
         cursor.execute("""
             DELETE FROM tracks WHERE start_time < ?
         """, (cutoff,))
+        deleted_tracks = cursor.rowcount
 
-        deleted = cursor.rowcount
         conn.commit()
 
-        return deleted
+        return deleted_events + deleted_tracks
+

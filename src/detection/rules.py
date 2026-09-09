@@ -112,11 +112,28 @@ class RuleEngine:
                 # Check for specific behaviors
                 behavior_names = condition["behavior"]
                 for beh in behaviors:
-                    if beh.get("behavior") in behavior_names:
+                    b_name = beh.get("behavior") or beh.get("type")
+                    if b_name in behavior_names:
                         return True
+
+            if "type" in condition:
+                # Check for specific condition types (e.g. loitering, crowd)
+                target_type = condition["type"]
+                for beh in behaviors:
+                    b_name = beh.get("behavior") or beh.get("type")
+                    if b_name == target_type:
+                        if "duration" in condition:
+                            if beh.get("duration", 0) >= condition["duration"]:
+                                return True
+                        elif "min_people" in condition:
+                            if beh.get("people_count", 0) >= condition["min_people"]:
+                                return True
+                        else:
+                            return True
 
         return False
 
     def add_rule(self, rule: DetectionRule):
         """Add a custom rule."""
         self.rules.append(rule)
+

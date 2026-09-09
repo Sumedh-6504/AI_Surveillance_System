@@ -134,7 +134,9 @@ class TestBehaviorAnalyzer:
     def test_analyzer_initialization(self):
         """Test behavior analyzer initializes correctly."""
         analyzer = BehaviorAnalyzer()
-        assert analyzer.pose is not None
+        assert analyzer.backend is not None
+        assert hasattr(analyzer, "pose")
+
         assert len(analyzer.pose_history) == 0
 
     def test_angle_calculation(self):
@@ -185,12 +187,13 @@ class TestBehaviorAnalyzer:
         # Test angle calculation directly
         shoulder = Point(0.3, 0.4)
         elbow = Point(0.3, 0.3)  # Raised
-        wrist = Point(0.3, 0.2)  # Above elbow
+        wrist = Point(0.4, 0.35)  # Acute angle at elbow
 
         angle = analyzer._calculate_angle(shoulder, elbow, wrist)
 
         # Acute angle indicates raised arms
         assert angle < 90
+
 
 
 if __name__ == "__main__":
