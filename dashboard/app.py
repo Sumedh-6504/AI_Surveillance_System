@@ -12,6 +12,15 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.database.models import init_db, get_events, get_statistics, cleanup_old_data
 
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DB_PATH = str(PROJECT_ROOT / "data" / "surveillance.db")
+
+
+def resolve_db_path(db_path: str) -> str:
+    """Resolve custom relative paths from the repository root."""
+    path = Path(db_path).expanduser()
+    return str((path if path.is_absolute() else PROJECT_ROOT / path).resolve())
+
 
 
 st.set_page_config(
@@ -408,7 +417,7 @@ def fetch_statistics(db_path: str) -> dict:
         init_db(db_path)
         now = time.time()
         hour_ago = now - 3600
-        return get_statistics(db_path, start_time=hour_ago)
+        return get_statistics(db_path)
     except Exception as e:
         st.error(f"Failed to fetch statistics: {e}")
         return {}
@@ -592,14 +601,14 @@ def build_timeline(events: list) -> None:
 # ---------------------------------------------------------------------------
 
 def main():
-    db_path = "data/surveillance.db"
+    db_path = DEFAULT_DB_PATH
     init_db(db_path)
 
 
     # --- Sidebar (collapsed by default) ---
     with st.sidebar:
         st.markdown("### Settings")
-        db_path = st.text_input("Database Path", value="data/surveillance.db")
+        db_path = resolve_db_path(st.text_input("Database Path", value=DEFAULT_DB_PATH))
         auto_refresh = st.checkbox("Auto Refresh", value=True)
         refresh_interval = st.slider("Refresh Interval (sec)", 5, 60, 10)
         st.markdown("---")
