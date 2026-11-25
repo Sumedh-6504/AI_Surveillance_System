@@ -15,6 +15,15 @@ from src.detection.rules import RuleEngine
 from src.alerting.engine import AlertEngine
 from src.database.models import init_db, save_event, get_events
 
+PROJECT_ROOT = Path(__file__).resolve().parent
+DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "surveillance.db"
+
+
+def resolve_db_path(db_path: str) -> str:
+    """Resolve relative SQLite paths against the repository root."""
+    path = Path(db_path).expanduser()
+    return str((path if path.is_absolute() else PROJECT_ROOT / path).resolve())
+
 
 class SurveillanceSystem:
     """
@@ -23,14 +32,14 @@ class SurveillanceSystem:
     """
 
     def __init__(self, config_path: str = "configs/default.yaml",
-                 db_path: str = "data/surveillance.db"):
+                 db_path: str = str(DEFAULT_DB_PATH)):
         # Load configuration
         print(f"Loading config from {config_path}...")
         self.config = load_config(config_path)
-        self.db_path = db_path
+        self.db_path = resolve_db_path(db_path)
 
         # Initialize database
-        init_db(db_path)
+        init_db(self.db_path)
 
         # Initialize camera
         camera_cfg = self.config.camera
@@ -93,6 +102,7 @@ class SurveillanceSystem:
         self.running = False
         self.frame_count = 0
         self.fps_history = []
+        self.last_detection_save = 0.0
 
     def start(self):
         """Start the surveillance system."""
@@ -193,12 +203,31 @@ class SurveillanceSystem:
 
         results["detections"] = detections
 
+        # Save periodic detection snapshots even if no alert rule fires.
+        # Rate-limit writes to prevent one database row per video frame.
+        now = time.time()
+        if detections and now - self.last_detection_save >= 5.0:
+            event_id = save_event(
+                db_path=self.db_path,
+                event_type="detection",
+                severity="low",
+                camera_id="cam1",
+                frame_id=self.frame_count,
+                rule_name="OBJECT_DETECTED",
+                detections=detections,
+            )
+            if event_id > 0:
+                self.last_detection_save = now
+                print(f"\nDetection saved: event_id={event_id}")
+            else:
+                print("\nERROR: Failed to save detection event")
+
         # Run tracking
         tracks = self.tracker.update(detections)
         results["tracks"] = tracks
 
         # Analyze behavior
-        behaviors = self.behavior_analyzer.analyze(frame, detections)
+        behaviors = self.behavior_analyzer.analyze(frame, detections, tracks)
         results["behaviors"] = behaviors
 
         # Analyze trajectories
@@ -250,7 +279,10 @@ class SurveillanceSystem:
                     rule_name=rule.name,
                     detections=normalized_detections
                 )
-                print(f"Event saved: rule={rule.name}, event_id={event_id}")
+                if event_id > 0:
+                    print(f"Event saved: rule={rule.name}, event_id={event_id}")
+                else:
+                    print(f"ERROR: Failed to save alert event for rule={rule.name}")
             except Exception as e:
                 print(f"ERROR: Failed to save event to database: {e}")
 
@@ -304,7 +336,7 @@ def main():
     )
     parser.add_argument(
         "--db",
-        default="data/surveillance.db",
+        default=str(DEFAULT_DB_PATH),
         help="Path to database file"
     )
     parser.add_argument(
