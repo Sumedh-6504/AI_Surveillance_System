@@ -33,18 +33,23 @@ class SurveillanceSystem:
     """
 
     def __init__(self, config_path: str = "configs/default.yaml",
-                 db_path: str = str(DEFAULT_DB_PATH)):
+                 db_path: str = str(DEFAULT_DB_PATH),
+                 source: str = None, device: str = "auto"):
         # Load configuration
         print(f"Loading config from {config_path}...")
         self.config = load_config(config_path)
         self.db_path = resolve_db_path(db_path)
+        self.source = source if source is not None else self.config.camera.rtsp_url
+        if not self.source.isdigit() and not self.source.startswith(("rtsp://", "http://", "https://")):
+            source_path = Path(self.source).expanduser()
+            self.source = str((source_path if source_path.is_absolute() else PROJECT_ROOT / source_path).resolve())
 
         # Initialize database
         init_db(self.db_path)
 
         # Initialize camera
         camera_cfg = self.config.camera
-        self.camera = CameraCapture(camera_cfg.rtsp_url, camera_cfg.fps)
+        self.camera = CameraCapture(self.source, camera_cfg.fps)
         self.frame_processor = FrameProcessor(
             input_size=(640, 640)
         )
@@ -54,7 +59,8 @@ class SurveillanceSystem:
         self.detector = YOLOv8Detector(
             model_path=det_cfg.yolo_model,
             confidence_threshold=det_cfg.confidence_threshold,
-            iou_threshold=det_cfg.iou_threshold
+            iou_threshold=det_cfg.iou_threshold,
+            device=device
         )
 
         # Initialize behavior analyzer using hybrid backend
@@ -116,7 +122,7 @@ class SurveillanceSystem:
             print("Failed to connect to camera!")
             return
 
-        print(f"Connected to camera: {self.config.camera.rtsp_url}")
+        print(f"Connected to video source: {self.source}")
         self._run_pipeline()
 
     def stop(self):
@@ -140,6 +146,9 @@ class SurveillanceSystem:
             # Read frame
             frame = self.camera.read()
             if frame is None:
+                if self.camera.end_of_stream:
+                    print("\nVideo file complete.")
+                    break
                 print("Warning: Failed to read frame")
                 time.sleep(0.1)
                 continue
@@ -346,6 +355,17 @@ def main():
         help="Path to database file"
     )
     parser.add_argument(
+        "--source",
+        default=None,
+        help="Webcam index (0), RTSP URL, or path to an MP4 file"
+    )
+    parser.add_argument(
+        "--device",
+        choices=("auto", "cpu", "cuda"),
+        default="auto",
+        help="ONNX inference provider preference (default: auto)"
+    )
+    parser.add_argument(
         "--demo",
         action="store_true",
         help="Run in demo mode without camera"
@@ -360,7 +380,9 @@ def main():
 
     system = SurveillanceSystem(
         config_path=args.config,
-        db_path=args.db
+        db_path=args.db,
+        source=args.source,
+        device=args.device
     )
 
     try:
