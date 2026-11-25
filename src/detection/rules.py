@@ -61,7 +61,7 @@ class RuleEngine:
         # Loitering - MEDIUM
         self.rules.append(DetectionRule(
             name="LOITERING",
-            conditions=[{"type": "loitering", "duration": 60}],
+            conditions=[{"type": "loitering", "duration": 10}],
             severity=Severity.MEDIUM,
             cooldown_sec=120
         ))
@@ -69,7 +69,7 @@ class RuleEngine:
         # Crowd formation - MEDIUM
         self.rules.append(DetectionRule(
             name="CROWD_FORMATION",
-            conditions=[{"type": "crowd", "min_people": 10}],
+            conditions=[{"type": "crowd_formation", "min_people": 10}],
             severity=Severity.MEDIUM,
             cooldown_sec=60
         ))
