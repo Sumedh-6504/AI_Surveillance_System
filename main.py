@@ -14,6 +14,7 @@ from src.tracking.trajectory import TrajectoryAnalyzer
 from src.detection.rules import RuleEngine
 from src.alerting.engine import AlertEngine
 from src.database.models import init_db, save_event, get_events
+from src.detection.event_policy import detection_signature, should_save_detection
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "surveillance.db"
@@ -103,6 +104,7 @@ class SurveillanceSystem:
         self.frame_count = 0
         self.fps_history = []
         self.last_detection_save = 0.0
+        self.last_detection_signature = None
 
     def start(self):
         """Start the surveillance system."""
@@ -203,10 +205,13 @@ class SurveillanceSystem:
 
         results["detections"] = detections
 
-        # Save periodic detection snapshots even if no alert rule fires.
-        # Rate-limit writes to prevent one database row per video frame.
+        # Store a snapshot when the scene changes, with a 60-second heartbeat
+        # for unchanged scenes. Alerts are still saved independently.
         now = time.time()
-        if detections and now - self.last_detection_save >= 5.0:
+        if should_save_detection(
+            detections, self.last_detection_signature,
+            self.last_detection_save, now,
+        ):
             event_id = save_event(
                 db_path=self.db_path,
                 event_type="detection",
@@ -218,6 +223,7 @@ class SurveillanceSystem:
             )
             if event_id > 0:
                 self.last_detection_save = now
+                self.last_detection_signature = detection_signature(detections)
                 print(f"\nDetection saved: event_id={event_id}")
             else:
                 print("\nERROR: Failed to save detection event")
