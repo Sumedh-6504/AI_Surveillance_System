@@ -3,6 +3,7 @@ import cv2
 import threading
 from typing import Optional, Tuple
 import time
+from pathlib import Path
 
 
 class CameraCapture:
@@ -20,21 +21,30 @@ class CameraCapture:
         self.running = False
         self.reconnect_delay = 5.0
         self.last_reconnect = 0.0
+        self.is_video_file = self._is_file_source(rtsp_url)
+        self.end_of_stream = False
+
+    @staticmethod
+    def _is_file_source(source: str) -> bool:
+        """Treat an existing local file as finite video, not a reconnecting stream."""
+        return Path(source).is_file()
 
     def connect(self) -> bool:
         """Connect to camera stream."""
         try:
-            # Convert to int if it's a numeric string (for USB webcam)
+            # Numeric webcam indices stay integers; MP4 paths stay strings.
             source = int(self.rtsp_url) if self.rtsp_url.isdigit() else self.rtsp_url
+            self.end_of_stream = False
             self.cap = cv2.VideoCapture(source)
             if not self.cap.isOpened():
                 return False
 
-            # Warmup: read a few frames to let camera stabilize
-            print("Warming up camera...")
-            for _ in range(5):
-                self.cap.read()
-                time.sleep(0.1)
+            # Never consume the opening frames of a prerecorded test video.
+            if not self.is_video_file:
+                print("Warming up camera...")
+                for _ in range(5):
+                    self.cap.read()
+                    time.sleep(0.1)
 
             self.running = True
             print("Camera connected and ready")
@@ -50,7 +60,11 @@ class CameraCapture:
 
         ret, frame = self.cap.read()
         if not ret:
-            self._attempt_reconnect()
+            if self.is_video_file:
+                self.end_of_stream = True
+                self.running = False
+            else:
+                self._attempt_reconnect()
             return None
 
         with self.lock:
