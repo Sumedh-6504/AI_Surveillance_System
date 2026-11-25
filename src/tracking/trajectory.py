@@ -58,9 +58,13 @@ class TrajectoryAnalyzer:
             # Update trajectory
             self.trajectories[track_id].append((norm_x, norm_y, frame_time))
 
-            # Keep last 60 positions (~4 seconds at 15fps)
-            if len(self.trajectories[track_id]) > 60:
-                self.trajectories[track_id] = self.trajectories[track_id][-60:]
+            # Keep a time-based history long enough for the 10-second
+            # loitering threshold, regardless of processing frame rate.
+            cutoff = frame_time - 15.0
+            self.trajectories[track_id] = [
+                point for point in self.trajectories[track_id]
+                if point[2] >= cutoff
+            ]
 
             # Analyze behavior
             behavior = self._analyze_track(track_id, frame_time)
