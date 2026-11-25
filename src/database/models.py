@@ -338,7 +338,8 @@ def update_track(db_path: str, track_id: int,
 
 def get_statistics(db_path: str,
                    start_time: float = None,
-                   end_time: float = None) -> Dict[str, Any]:
+                   end_time: float = None,
+                   event_type: str = None) -> Dict[str, Any]:
     """Get summary statistics from the database."""
     with get_connection(db_path) as conn:
         cursor = conn.cursor()
@@ -352,6 +353,10 @@ def get_statistics(db_path: str,
         if end_time:
             time_filter += " AND timestamp <= ?"
             params.append(end_time)
+
+        if event_type is not None:
+            time_filter += " AND event_type = ?"
+            params.append(event_type)
 
         # Total events
         cursor.execute(f"""
