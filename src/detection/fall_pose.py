@@ -160,29 +160,39 @@ class PoseFallDetector:
                 poses.append((box, xy[i], kpconf[i]))
         emitted = []
         used = set()
+        # Stable state for an unambiguous single-person video: tracker IDs
+        # can change as the subject bends or falls. The state still expires
+        # after a configurable gap with no detections.
+        person_tracks = [t for t in tracks if t.get("class") == "person"
+                         and t.get("track_id") is not None]
+        single_person = len(person_tracks) == 1 and len(poses) == 1
+        active_state_ids = set()
+        stable_key = "__single_visible_person__"
         if debug:
             print(f"[FALL DEBUG] time={now:.2f}s, active_tracks={len(active)}, poses={len(poses)}")
         for track in tracks:
             if track.get("class") != "person" or track.get("track_id") is None:
                 continue
             track_id = track["track_id"]
+            state_id = stable_key if single_person else track_id
+            active_state_ids.add(state_id)
             candidates = [(bbox_iou(track["bbox"], p[0]), i)
                           for i, p in enumerate(poses) if i not in used]
             if not candidates:
                 if debug:
                     print(f"[FALL DEBUG] track={track_id}: no pose candidates")
-                self.state.update(track_id, None, now)
+                self.state.update(state_id, None, now)
                 continue
             similarity, index = max(candidates)
             if similarity < 0.3:
                 if debug:
                     print(f"[FALL DEBUG] track={track_id}: low box IoU={similarity:.2f}")
-                self.state.update(track_id, None, now)
+                self.state.update(state_id, None, now)
                 continue
             used.add(index)
             bbox, points, confidence = poses[index]
             observation = pose_state(points, confidence, bbox, frame.shape[0])
-            if self.state.update(track_id, observation, now):
+            if self.state.update(state_id, observation, now):
                 emitted.append({
                     "track_id": track_id,
                     "bbox": [float(v) for v in track["bbox"]],
@@ -190,7 +200,7 @@ class PoseFallDetector:
                     "behavior": "suspected_fall",
                 })
             if debug:
-                state = self.state.states.get(track_id, {})
+                state = self.state.states.get(state_id, {})
                 baseline = state.get("baseline")
                 drop = (observation[1] - baseline) if observation and baseline is not None else None
                 print(f"[FALL DEBUG] track={track_id} IoU={similarity:.2f} "
@@ -199,5 +209,5 @@ class PoseFallDetector:
                       f"armed={state.get('armed')} "
                       f"candidate={state.get('candidate_since')} "
                       f"alerted={state.get('alerted')}")
-        self.state.cleanup(active, now)
+        self.state.cleanup(active_state_ids, now)
         return emitted
