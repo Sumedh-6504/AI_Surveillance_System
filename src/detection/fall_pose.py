@@ -132,12 +132,14 @@ class PoseFallDetector:
         self.state = FallStateMachine(config)
         print(f"Pose-based fall detector enabled on {self.device}")
 
-    def detect(self, frame, tracks, now=None):
+    def detect(self, frame, tracks, now=None, debug=False):
         """Return suspected-fall alerts, matching pose boxes to person tracks."""
         if now is None:
             now = time.monotonic()
         active = {t.get("track_id") for t in tracks if t.get("track_id") is not None}
         if not active:
+            if debug:
+                print("[FALL DEBUG] no active person tracks")
             self.state.cleanup(active, now)
             return []
         prediction = self.model.predict(
@@ -158,6 +160,8 @@ class PoseFallDetector:
                 poses.append((box, xy[i], kpconf[i]))
         emitted = []
         used = set()
+        if debug:
+            print(f"[FALL DEBUG] time={now:.2f}s, active_tracks={len(active)}, poses={len(poses)}")
         for track in tracks:
             if track.get("class") != "person" or track.get("track_id") is None:
                 continue
@@ -165,10 +169,14 @@ class PoseFallDetector:
             candidates = [(bbox_iou(track["bbox"], p[0]), i)
                           for i, p in enumerate(poses) if i not in used]
             if not candidates:
+                if debug:
+                    print(f"[FALL DEBUG] track={track_id}: no pose candidates")
                 self.state.update(track_id, None, now)
                 continue
             similarity, index = max(candidates)
             if similarity < 0.3:
+                if debug:
+                    print(f"[FALL DEBUG] track={track_id}: low box IoU={similarity:.2f}")
                 self.state.update(track_id, None, now)
                 continue
             used.add(index)
@@ -181,5 +189,15 @@ class PoseFallDetector:
                     "confidence": float(track.get("confidence", 0)),
                     "behavior": "suspected_fall",
                 })
+            if debug:
+                state = self.state.states.get(track_id, {})
+                baseline = state.get("baseline")
+                drop = (observation[1] - baseline) if observation and baseline is not None else None
+                print(f"[FALL DEBUG] track={track_id} IoU={similarity:.2f} "
+                      f"posture={observation[0] if observation else 'unknown'} "
+                      f"hip_drop={drop if drop is not None else 'n/a'} "
+                      f"armed={state.get('armed')} "
+                      f"candidate={state.get('candidate_since')} "
+                      f"alerted={state.get('alerted')}")
         self.state.cleanup(active, now)
         return emitted
