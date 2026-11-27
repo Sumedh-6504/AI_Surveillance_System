@@ -17,8 +17,16 @@ def test_cli_offers_isolated_fall_mode():
     assert '"--debug-fall"' in source
 
 
-def test_debug_no_active_tracks_never_generates_fall(capsys):
+def test_debug_no_person_and_no_pose_never_generates_fall(capsys):
+    import numpy as np
     detector = PoseFallDetector.__new__(PoseFallDetector)
     detector.state = FallStateMachine()
-    assert detector.detect(frame=None, tracks=[], now=1.0, debug=True) == []
-    assert "no active person tracks" in capsys.readouterr().out
+    detector.device = "cpu"
+    class EmptyModel:
+        def predict(self, **kwargs):
+            result = type("Result", (), {"boxes": None, "keypoints": None})()
+            return [result]
+    detector.model = EmptyModel()
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    assert detector.detect(frame=frame, tracks=[], now=1.0, debug=True) == []
+    assert "poses=0" in capsys.readouterr().out
