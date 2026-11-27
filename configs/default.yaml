@@ -26,6 +26,12 @@ behavior:
   input_resolution: 224
   confidence_threshold: 0.6
 
+intrusion:
+  enabled: true
+  # Normalized rectangle [left, top, right, bottom], between 0 and 1
+  zone: [0.35, 0.25, 0.75, 0.85]
+  cooldown_seconds: 20
+
 tracking:
   max_age: 30
   min_hits: 3
