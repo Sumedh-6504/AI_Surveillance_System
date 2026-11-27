@@ -28,6 +28,12 @@ class BehaviorConfig(BaseModel):
     confidence_threshold: float = 0.6
 
 
+class IntrusionConfig(BaseModel):
+    enabled: bool = True
+    zone: List[float] = [0.35, 0.25, 0.75, 0.85]
+    cooldown_seconds: float = 20.0
+
+
 class TrackingConfig(BaseModel):
     max_age: int = 30
     min_hits: int = 3
@@ -85,6 +91,7 @@ class Config(BaseModel):
     detection: DetectionConfig
     behavior: BehaviorConfig = BehaviorConfig()
     tracking: TrackingConfig
+    intrusion: IntrusionConfig = IntrusionConfig()
     alerting: AlertingConfig
     rules: RulesConfig
     optimization: OptimizationConfig
