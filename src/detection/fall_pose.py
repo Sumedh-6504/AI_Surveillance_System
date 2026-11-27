@@ -81,14 +81,17 @@ class FallStateMachine:
             state["alerted"] = False
             return False
         drop = hip_y - state["baseline"] if state["baseline"] is not None else 0
-        if posture == "horizontal" and state["armed"] and (
-            drop >= self.config.min_drop_ratio
-        ):
+        # An observed, substantial downward hip movement starts the fall
+        # candidate. Once armed, retain it while the *observed* posture remains
+        # horizontal: hip locations can fluctuate as the body rotates or
+        # keypoints become partly obscured. Missing/other poses still cancel.
+        if posture == "horizontal" and state["armed"]:
             if state["candidate_since"] is None:
-                state["candidate_since"] = now
-            if (not state["alerted"]
-                and now - state["candidate_since"] >= self.config.confirmation_seconds
-                and now - state["last_alert"] >= self.config.cooldown_seconds):
+                if drop >= self.config.min_drop_ratio:
+                    state["candidate_since"] = now
+            elif (not state["alerted"]
+                  and now - state["candidate_since"] >= self.config.confirmation_seconds
+                  and now - state["last_alert"] >= self.config.cooldown_seconds):
                 state["alerted"] = True
                 state["last_alert"] = now
                 return True
