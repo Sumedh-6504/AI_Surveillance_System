@@ -75,3 +75,51 @@ def test_multi_person_video_does_not_transfer_history():
     assert "__single_visible_person__" in detector.state.states
     # No pose corresponding to the second track: state isn't moved to it.
     assert 2 not in detector.state.states
+
+
+
+def test_pose_only_detection_continues_fall_when_object_track_disappears():
+    detector = PoseFallDetector.__new__(PoseFallDetector)
+    detector.state = FallStateMachine(FallConfig(confirmation_seconds=0.8))
+    detector.device = "cpu"
+    upright = [40, 0, 60, 78]
+    lying = [10, 50, 90, 92]
+    detector.model = FakeModel([
+        FakeResult(upright, joints()),
+        FakeResult(lying, joints(horizontal=True)),
+        FakeResult(lying, joints(horizontal=True)),
+    ])
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    track = [{"track_id": 7, "bbox": upright, "class": "person", "confidence": 0.9}]
+    assert detector.detect(frame, track, 0.0) == []
+    assert detector.detect(frame, [], 1.0) == []
+    alerts = detector.detect(frame, [], 2.0)
+    assert len(alerts) == 1
+    assert alerts[0]["track_id"] == -1
+    assert alerts[0]["behavior"] == "suspected_fall"
+
+
+def test_pose_only_lying_at_start_does_not_trigger():
+    detector = PoseFallDetector.__new__(PoseFallDetector)
+    detector.state = FallStateMachine(FallConfig(confirmation_seconds=0.5))
+    detector.device = "cpu"
+    lying = [10, 50, 90, 92]
+    detector.model = FakeModel([
+        FakeResult(lying, joints(horizontal=True)),
+        FakeResult(lying, joints(horizontal=True)),
+    ])
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    assert detector.detect(frame, [], 0.0) == []
+    assert detector.detect(frame, [], 2.0) == []
+
+
+def test_pose_missing_does_not_create_fall_alert():
+    detector = PoseFallDetector.__new__(PoseFallDetector)
+    detector.state = FallStateMachine(FallConfig(confirmation_seconds=0.5))
+    detector.device = "cpu"
+    class NoPoseModel:
+        def predict(self, **kwargs):
+            return [type("Result", (), {"boxes": None, "keypoints": None})()]
+    detector.model = NoPoseModel()
+    frame = np.zeros((100, 100, 3), dtype=np.uint8)
+    assert detector.detect(frame, [], 0.0) == []
