@@ -36,10 +36,22 @@ class SurveillanceSystem:
 
     def __init__(self, config_path: str = "configs/default.yaml",
                  db_path: str = str(DEFAULT_DB_PATH),
-                 source: str = None, device: str = "auto"):
+                 source: str = None, device: str = "auto",
+                 mode: str = "all", debug_fall: bool = False):
         # Load configuration
         print(f"Loading config from {config_path}...")
         self.config = load_config(config_path)
+        if mode not in ("all", "fall", "intrusion"):
+            raise ValueError("mode must be all, fall, or intrusion")
+        self.mode = mode
+        self.debug_fall = debug_fall
+        if mode == "fall":
+            self.config.fall_detection.enabled = True
+            self.config.intrusion.enabled = False
+        elif mode == "intrusion":
+            self.config.fall_detection.enabled = False
+            self.config.intrusion.enabled = True
+        print(f"Surveillance mode: {self.mode}; fall enabled={self.config.fall_detection.enabled}; intrusion enabled={self.config.intrusion.enabled}")
         self.db_path = resolve_db_path(db_path)
         self.source = source if source is not None else self.config.camera.rtsp_url
         if not self.source.isdigit() and not self.source.startswith(("rtsp://", "http://", "https://")):
@@ -150,6 +162,9 @@ class SurveillanceSystem:
             return
 
         print(f"Connected to video source: {self.source}")
+        if self.mode == "fall" and self.fall_detector is None:
+            print("ERROR: Fall mode requested but pose model is not loaded; aborting.")
+            return
         self._run_pipeline()
 
     def stop(self):
@@ -293,7 +308,10 @@ class SurveillanceSystem:
                         fall_time = media_ms / 1000.0
                     elif fps > 0:
                         fall_time = frame_number / fps
-                falls = self.fall_detector.detect(frame, tracks, fall_time)
+                falls = self.fall_detector.detect(
+                    frame, tracks, fall_time,
+                    debug=self.debug_fall and self.frame_count % 15 == 0,
+                )
                 for fall in falls:
                     self._record_fall(frame, fall)
                     results["alerts"].append({
@@ -511,6 +529,17 @@ def main():
         help="ONNX inference provider preference (default: auto)"
     )
     parser.add_argument(
+        "--mode",
+        choices=("all", "fall", "intrusion"),
+        default="all",
+        help="Isolate fall detection or intrusion detection for exam demos"
+    )
+    parser.add_argument(
+        "--debug-fall",
+        action="store_true",
+        help="Print periodic pose association and fall-state diagnostics"
+    )
+    parser.add_argument(
         "--demo",
         action="store_true",
         help="Run in demo mode without camera"
@@ -527,7 +556,9 @@ def main():
         config_path=args.config,
         db_path=args.db,
         source=args.source,
-        device=args.device
+        device=args.device,
+        mode=args.mode,
+        debug_fall=args.debug_fall
     )
 
     try:
