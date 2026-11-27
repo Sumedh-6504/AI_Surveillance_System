@@ -225,5 +225,10 @@ class PoseFallDetector:
                       f"armed={state.get('armed')} "
                       f"candidate={state.get('candidate_since')} "
                       f"alerted={state.get('alerted')}")
+        # Missing pose evidence must interrupt sustained confirmation, while
+        # retaining an earlier upright baseline for brief tracking gaps.
+        for state_id, state in self.state.states.items():
+            if state_id not in active_state_ids:
+                state["candidate_since"] = None
         self.state.cleanup(active_state_ids, now)
         return emitted
