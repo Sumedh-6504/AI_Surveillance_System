@@ -137,11 +137,8 @@ class PoseFallDetector:
         if now is None:
             now = time.monotonic()
         active = {t.get("track_id") for t in tracks if t.get("track_id") is not None}
-        if not active:
-            if debug:
-                print("[FALL DEBUG] no active person tracks")
-            self.state.cleanup(active, now)
-            return []
+        # Always run pose inference: regular object detection may temporarily
+        # miss a person who is bending or lying down during a fall.
         prediction = self.model.predict(
             source=frame, device=self.device, imgsz=640,
             conf=0.4, classes=[0], verbose=False
@@ -165,11 +162,30 @@ class PoseFallDetector:
         # after a configurable gap with no detections.
         person_tracks = [t for t in tracks if t.get("class") == "person"
                          and t.get("track_id") is not None]
-        single_person = len(person_tracks) == 1 and len(poses) == 1
+        single_person = len(person_tracks) <= 1 and len(poses) == 1
         active_state_ids = set()
         stable_key = "__single_visible_person__"
         if debug:
             print(f"[FALL DEBUG] time={now:.2f}s, active_tracks={len(active)}, poses={len(poses)}")
+        # If the primary detector loses this single person, use the pose
+        # model's own bounding box to continue the same posture history.
+        # Never infer a unique person in a multi-person frame.
+        if single_person and not person_tracks:
+            bbox, points, confidence = poses[0]
+            observation = pose_state(points, confidence, bbox, frame.shape[0])
+            active_state_ids.add(stable_key)
+            if self.state.update(stable_key, observation, now):
+                emitted.append({
+                    "track_id": -1,  # Explicit unknown tracker ID.
+                    "bbox": [float(v) for v in bbox],
+                    "confidence": float(min(confidence[i] for i in (5, 6, 11, 12))),
+                    "behavior": "suspected_fall",
+                })
+            if debug:
+                state = self.state.states.get(stable_key, {})
+                print(f"[FALL DEBUG] pose-only posture={observation[0] if observation else 'unknown'} "
+                      f"armed={state.get('armed')} candidate={state.get('candidate_since')} "
+                      f"alerted={state.get('alerted')}")
         for track in tracks:
             if track.get("class") != "person" or track.get("track_id") is None:
                 continue
