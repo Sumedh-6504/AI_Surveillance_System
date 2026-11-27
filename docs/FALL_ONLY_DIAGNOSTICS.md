@@ -62,3 +62,33 @@ python -m pytest tests/test_fall_pose.py tests/test_fall_demo_mode.py -v
 
 Do not present the word `FALL` overlaid by the video as evidence that the model
 detected anything; use an actual `SUSPECTED_FALL` SQLite event as the proof.
+
+
+## 2026-11-27: Fix for object-track dropouts
+
+A real test log showed that the YOLO pose model found a standing person
+and then horizontal pose, while the regular object detector repeatedly returned
+zero tracks. Fall monitoring now runs pose estimation **even when there are no
+object tracks**, and uses the one visible pose to continue the single-person
+temporal history. Such alerts use `track_id=-1` (unknown tracking ID) but
+still have an evidence screenshot. The system still requires the posture
+transition and sustained confirmation; a video label saying `FALL` is not
+evidence of a detected event.
+
+To test:
+
+```powershell
+git pull origin snehasich
+python -m pytest tests/test_fall_pose.py tests/test_fall_tracking_handoff.py tests/test_fall_demo_mode.py -v
+python main.py --source "videos/fall_test.mp4" --device auto --mode fall --debug-fall
+```
+
+The debug output will show `pose-only posture=...` where the pose model finds
+a person but object tracking does not. The alert requires continuously observed
+horizontal evidence; if the person disappears or leaves the video too soon,
+`SUSPECTED_FALL` should not be saved.
+
+The single-person fallback is only for unambiguous frames. If multiple people
+are visible, the detector requires a valid object-track match. Camera cuts and
+different people entering the same scene can still confuse temporal identity;
+review actual video performance before using this system for real monitoring.
