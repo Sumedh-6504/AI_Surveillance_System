@@ -285,9 +285,14 @@ class SurveillanceSystem:
             try:
                 fall_time = time.monotonic()
                 if self.camera.is_video_file and self.camera.cap is not None:
-                    media_ms = self.camera.cap.get(cv2.CAP_PROP_POS_MSEC)
+                    cap = self.camera.cap
+                    media_ms = cap.get(cv2.CAP_PROP_POS_MSEC)
+                    fps = cap.get(cv2.CAP_PROP_FPS)
+                    frame_number = cap.get(cv2.CAP_PROP_POS_FRAMES)
                     if media_ms > 0:
                         fall_time = media_ms / 1000.0
+                    elif fps > 0:
+                        fall_time = frame_number / fps
                 falls = self.fall_detector.detect(frame, tracks, fall_time)
                 for fall in falls:
                     self._record_fall(frame, fall)
@@ -295,7 +300,8 @@ class SurveillanceSystem:
                         "rule": "SUSPECTED_FALL", "severity": "high",
                     })
             except Exception as exc:
-                print(f"Fall model inference failed: {exc}")
+                print(f"Fall model inference failed; disabling pose analysis: {exc}")
+                self.fall_detector = None
 
         # Analyze behavior
         behaviors = self.behavior_analyzer.analyze(frame, detections, tracks)
