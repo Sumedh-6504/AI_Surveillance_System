@@ -177,7 +177,10 @@ class SurveillanceSystem:
     def _run_pipeline(self):
         """Main processing pipeline."""
         opt_cfg = self.config.optimization
-        frame_skip = opt_cfg.frame_skip
+        # A recorded fall can happen within skipped frames. Process every
+        # frame in fall-only video mode; this favors accuracy over speed.
+        frame_skip = (0 if self.mode == "fall" and self.camera.is_video_file
+                      else opt_cfg.frame_skip)
 
         print("Starting processing pipeline...")
         print(f"Frame skip: {frame_skip}, Press 'q' to quit")
