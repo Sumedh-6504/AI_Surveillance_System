@@ -14,7 +14,7 @@ class FallConfig:
     confirmation_seconds: float = 0.8
     cooldown_seconds: float = 20.0
     min_drop_ratio: float = 0.12
-    max_missing_seconds: float = 1.5
+    max_missing_seconds: float = 5.0
 
 
 def pose_state(keypoints, confidence, bbox, frame_height, min_confidence=0.45):
