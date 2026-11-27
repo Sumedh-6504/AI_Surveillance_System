@@ -32,6 +32,7 @@ bitsandbytes>=0.41.0  # INT8 quantization for 16GB RAM systems
 # Dashboard
 streamlit>=1.28.0
 pandas>=2.0.0
+plotly>=5.18.0
 
 # Alerting
 twilio>=8.0.0

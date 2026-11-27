@@ -28,6 +28,20 @@ class BehaviorConfig(BaseModel):
     confidence_threshold: float = 0.6
 
 
+class FallDetectionConfig(BaseModel):
+    enabled: bool = False
+    model_path: str = "models/yolov8n-pose.pt"
+    confirmation_seconds: float = 0.8
+    cooldown_seconds: float = 20.0
+    min_drop_ratio: float = 0.12
+
+
+class IntrusionConfig(BaseModel):
+    enabled: bool = True
+    zone: List[float] = [0.35, 0.25, 0.75, 0.85]
+    cooldown_seconds: float = 20.0
+
+
 class TrackingConfig(BaseModel):
     max_age: int = 30
     min_hits: int = 3
@@ -85,6 +99,8 @@ class Config(BaseModel):
     detection: DetectionConfig
     behavior: BehaviorConfig = BehaviorConfig()
     tracking: TrackingConfig
+    intrusion: IntrusionConfig = IntrusionConfig()
+    fall_detection: FallDetectionConfig = FallDetectionConfig()
     alerting: AlertingConfig
     rules: RulesConfig
     optimization: OptimizationConfig

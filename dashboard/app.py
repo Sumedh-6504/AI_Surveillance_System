@@ -11,6 +11,17 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.database.models import init_db, get_events, get_statistics, cleanup_old_data
+from src.dashboard.evidence import resolve_evidence_path
+from src.dashboard.metrics import compute_threat_level
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DEFAULT_DB_PATH = str(PROJECT_ROOT / "data" / "surveillance.db")
+
+
+def resolve_db_path(db_path: str) -> str:
+    """Resolve custom relative paths from the repository root."""
+    path = Path(db_path).expanduser()
+    return str((path if path.is_absolute() else PROJECT_ROOT / path).resolve())
 
 
 
@@ -403,29 +414,26 @@ def fetch_events(db_path: str, limit: int = 100) -> list:
 
 
 @st.cache_data(ttl=10)
+def fetch_alert_statistics(db_path: str) -> dict:
+    try:
+        init_db(db_path)
+        return get_statistics(db_path, start_time=time.time() - 3600, event_type="alert")
+    except Exception as e:
+        st.error(f"Failed to fetch alert statistics: {e}")
+        return {}
+
+
+@st.cache_data(ttl=10)
 def fetch_statistics(db_path: str) -> dict:
     try:
         init_db(db_path)
-        now = time.time()
-        hour_ago = now - 3600
-        return get_statistics(db_path, start_time=hour_ago)
+        return get_statistics(db_path, start_time=time.time() - 3600)
     except Exception as e:
         st.error(f"Failed to fetch statistics: {e}")
         return {}
 
 
 
-def compute_threat_level(critical: int, high: int, medium: int, low: int) -> tuple:
-    score = critical * 40 + high * 20 + medium * 5 + low * 1
-    if score == 0:
-        return ("CLEAR", "low", 0)
-    if score <= 10:
-        return ("LOW", "low", min(score / 10 * 25, 25))
-    if score <= 40:
-        return ("MODERATE", "medium", 25 + (score - 10) / 30 * 25)
-    if score <= 100:
-        return ("HIGH", "high", 50 + (score - 40) / 60 * 25)
-    return ("CRITICAL", "critical", min(75 + (score - 100) / 100 * 25, 100))
 
 
 def make_gauge_svg(pct: float, level: str) -> str:
@@ -549,6 +557,7 @@ def build_timeline(events: list) -> None:
         return
 
     sev_colors = {"critical": "#f43f5e", "high": "#f97316", "medium": "#f59e0b", "low": "#10b981"}
+    sev_positions = {"low": 1, "medium": 2, "high": 3, "critical": 4}
 
     timestamps = [datetime.fromtimestamp(e.get("timestamp", 0)) for e in events]
     severities = [e.get("severity", "low") for e in events]
@@ -559,7 +568,7 @@ def build_timeline(events: list) -> None:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
         x=timestamps,
-        y=[sev_colors.get(s, 0) for s in severities],
+        y=[sev_positions.get(s, 1) for s in severities],
         mode='markers',
         marker=dict(size=10, color=colors, opacity=0.8,
                     line=dict(width=1, color='rgba(255,255,255,0.1)')),
@@ -576,7 +585,7 @@ def build_timeline(events: list) -> None:
             tickfont=dict(size=10, family='JetBrains Mono', color='#64748b'),
         ),
         yaxis=dict(
-            tickvals=[sev_colors[s] for s in sev_order],
+            tickvals=[sev_positions[s] for s in sev_order],
             ticktext=[s.upper() for s in sev_order],
             tickfont=dict(size=10, family='Inter', color='#64748b'),
             gridcolor='rgba(100,116,139,0.08)',
@@ -592,14 +601,14 @@ def build_timeline(events: list) -> None:
 # ---------------------------------------------------------------------------
 
 def main():
-    db_path = "data/surveillance.db"
+    db_path = DEFAULT_DB_PATH
     init_db(db_path)
 
 
     # --- Sidebar (collapsed by default) ---
     with st.sidebar:
         st.markdown("### Settings")
-        db_path = st.text_input("Database Path", value="data/surveillance.db")
+        db_path = resolve_db_path(st.text_input("Database Path", value=DEFAULT_DB_PATH))
         auto_refresh = st.checkbox("Auto Refresh", value=True)
         refresh_interval = st.slider("Refresh Interval (sec)", 5, 60, 10)
         st.markdown("---")
@@ -619,13 +628,15 @@ def main():
     # --- Fetch data ---
     events = fetch_events(db_path)
     stats = fetch_statistics(db_path)
-    total_events = stats.get("total_events", len(events))
+    alert_stats = fetch_alert_statistics(db_path)
+    total_events = stats.get("total_events", 0)
     by_severity = stats.get("by_severity", {})
     by_type = stats.get("by_type", {})
-    critical_count = by_severity.get("critical", 0)
-    high_count = by_severity.get("high", 0)
-    medium_count = by_severity.get("medium", 0)
-    low_count = by_severity.get("low", 0)
+    alert_severity = alert_stats.get("by_severity", {})
+    critical_count = alert_severity.get("critical", 0)
+    high_count = alert_severity.get("high", 0)
+    medium_count = alert_severity.get("medium", 0)
+    low_count = alert_severity.get("low", 0)
 
     # --- Check system status ---
     system_active = False
@@ -718,7 +729,7 @@ def main():
             <div class="chart-panel-title">Severity Breakdown</div>
         </div>
         """, unsafe_allow_html=True)
-        build_severity_donut(by_severity)
+        build_severity_donut(alert_severity)
 
     with col_bars:
         st.markdown("""
@@ -726,7 +737,7 @@ def main():
             <div class="chart-panel-title">Events by Rule</div>
         </div>
         """, unsafe_allow_html=True)
-        build_type_bars(by_type)
+        build_type_bars(alert_stats.get("by_type", {}))
 
     # === EVENT TIMELINE ===
     if events:
@@ -751,9 +762,19 @@ def main():
     </div>
     """, unsafe_allow_html=True)
 
-    if events:
+    selected_feed = st.selectbox(
+        "Event type", ["All events", "Alerts only", "Detections only"],
+        key="event_feed_filter"
+    )
+    visible_events = [
+        e for e in events
+        if selected_feed == "All events"
+        or (selected_feed == "Alerts only" and e.get("event_type") == "alert")
+        or (selected_feed == "Detections only" and e.get("event_type") == "detection")
+    ]
+    if visible_events:
         feed_html = '<div class="event-feed">'
-        for event in events[:30]:
+        for event in visible_events[:30]:
             sev = event.get("severity", "low").lower()
             rule = event.get("rule_name", "—") or "—"
             etype = event.get("event_type", "")
@@ -778,20 +799,26 @@ def main():
         with st.expander("Inspect Event Details"):
             selected = st.selectbox(
                 "Select Event",
-                options=[e["id"] for e in events[:20]],
+                options=[e["id"] for e in visible_events[:20]],
                 format_func=lambda x: f"Event #{x}"
             )
-            event = next((e for e in events if e["id"] == selected), None)
+            event = next((e for e in visible_events if e["id"] == selected), None)
             if event:
                 st.json(event)
+                evidence_file = (event.get("metadata") or {}).get("evidence_file")
+                image_path = resolve_evidence_path(db_path, evidence_file)
+                if image_path is not None:
+                    st.image(str(image_path), caption=f"Incident evidence — event #{event['id']}", use_container_width=True)
+                elif evidence_file:
+                    st.warning("Evidence image is unavailable or its path is invalid.")
     else:
         st.markdown("""
         <div class="empty-state">
             <div class="empty-icon">📡</div>
-            <div class="empty-title">No Events Detected</div>
+            <div class="empty-title">No Matching Events</div>
             <div class="empty-desc">
-                The surveillance system hasn't recorded any events yet.
-                Start the detection pipeline to begin monitoring.
+                No events match this filter. Try another event type,
+                or start the detection pipeline to begin monitoring.
             </div>
             <div class="empty-cmd">python main.py --config configs/default.yaml</div>
         </div>

@@ -7,16 +7,21 @@ from pathlib import Path
 
 class YOLOv8Detector:
     """
-    YOLOv8 detector using ONNX runtime for CPU inference.
-    Optimized for Intel UHD graphics.
+    YOLOv8 detector using ONNX Runtime. Uses CUDA when installed and usable,
+    otherwise gracefully falls back to CPU.
     """
 
     def __init__(self, model_path: str = "models/yolov8n.onnx",
                  confidence_threshold: float = 0.5,
-                 iou_threshold: float = 0.45):
+                 iou_threshold: float = 0.45,
+                 device: str = "auto"):
         self.model_path = model_path
         self.confidence_threshold = confidence_threshold
         self.iou_threshold = iou_threshold
+        if device not in ("auto", "cpu", "cuda"):
+            raise ValueError("device must be auto, cpu, or cuda")
+        self.device = device
+        self.active_provider = None
         self.session = None
         self.input_name = None
         self._load_model()
@@ -28,9 +33,23 @@ class YOLOv8Detector:
             print("Please export YOLOv8 model to ONNX format first.")
             return
 
-        providers = ['CPUExecutionProvider']
-        self.session = ort.InferenceSession(self.model_path, providers=providers)
+        available = ort.get_available_providers()
+        cuda_available = "CUDAExecutionProvider" in available
+        if self.device == "cuda" and not cuda_available:
+            print("CUDA provider unavailable; falling back to CPU. Install a compatible onnxruntime-gpu build.")
+        prefer_cuda = self.device != "cpu" and cuda_available
+        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"] if prefer_cuda else ["CPUExecutionProvider"]
+        try:
+            self.session = ort.InferenceSession(self.model_path, providers=providers)
+            self.active_provider = self.session.get_providers()[0]
+        except Exception as exc:
+            if not prefer_cuda:
+                raise
+            print(f"CUDA initialization failed ({exc}); retrying on CPU")
+            self.session = ort.InferenceSession(self.model_path, providers=["CPUExecutionProvider"])
+            self.active_provider = "CPUExecutionProvider"
         self.input_name = self.session.get_inputs()[0].name
+        print(f"YOLO ONNX inference provider: {self.active_provider}")
 
     def detect(self, image: np.ndarray) -> List[Dict[str, Any]]:
         """
