@@ -15,6 +15,7 @@ from src.detection.rules import RuleEngine
 from src.alerting.engine import AlertEngine
 from src.database.models import init_db, save_event, get_events
 from src.detection.event_policy import detection_signature, should_save_detection
+from src.detection.intrusion import RestrictedZone, IntrusionMonitor
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "surveillance.db"
@@ -76,6 +77,12 @@ class SurveillanceSystem:
         )
         self.trajectory_analyzer = TrajectoryAnalyzer(
             frame_size=(camera_cfg.resolution[0], camera_cfg.resolution[1])
+        )
+        intrusion_cfg = self.config.intrusion
+        self.intrusion = (
+            IntrusionMonitor(RestrictedZone(*intrusion_cfg.zone),
+                             cooldown_sec=intrusion_cfg.cooldown_seconds)
+            if intrusion_cfg.enabled else None
         )
 
         # Initialize rule engine
@@ -241,6 +248,17 @@ class SurveillanceSystem:
         tracks = self.tracker.update(detections)
         results["tracks"] = tracks
 
+        # Detect new entries to the configured restricted zone.
+        # Only tracked people are eligible, not arbitrary objects.
+        if self.intrusion is not None:
+            entries = self.intrusion.update(tracks, frame.shape, time.time())
+            results["intrusions"] = entries
+            for entered in entries:
+                self._record_intrusion(frame, entered)
+                results["alerts"].append({
+                    "rule": "RESTRICTED_ZONE_INTRUSION", "severity": "high",
+                })
+
         # Analyze behavior
         behaviors = self.behavior_analyzer.analyze(frame, detections, tracks)
         results["behaviors"] = behaviors
@@ -312,10 +330,55 @@ class SurveillanceSystem:
 
         return results
 
+    def _record_intrusion(self, frame, track):
+        """Persist an intrusion event and its JPEG evidence to local storage."""
+        from uuid import uuid4
+        evidence_dir = Path(self.db_path).parent / "evidence"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"intrusion_{uuid4().hex}.jpg"
+        image_path = evidence_dir / filename
+        annotated = frame.copy()
+        bbox = track.get("bbox", [0, 0, 0, 0])
+        x1, y1, x2, y2 = map(int, bbox)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 3)
+        cv2.putText(annotated, "RESTRICTED ZONE INTRUSION", (15, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        if self.intrusion is not None:
+            zx1, zy1, zx2, zy2 = self.intrusion.zone.pixels(frame.shape)
+            cv2.rectangle(annotated, (zx1, zy1), (zx2, zy2), (0, 0, 255), 2)
+        evidence_name = None
+        if cv2.imwrite(str(image_path), annotated):
+            evidence_name = filename
+        else:
+            print("WARNING: Failed to save intrusion screenshot")
+        event_id = save_event(
+            db_path=self.db_path, event_type="alert", severity="high",
+            camera_id="cam1", frame_id=self.frame_count,
+            rule_name="RESTRICTED_ZONE_INTRUSION",
+            detections=[{
+                "class": "person", "confidence": float(track.get("confidence", 0)),
+                "track_id": int(track["track_id"]),
+                "bbox": [float(value) for value in bbox],
+            }],
+            metadata={"track_id": int(track["track_id"]),
+                      "evidence_file": evidence_name},
+        )
+        if event_id > 0:
+            print(f"\nINTRUSION saved: event_id={event_id}, evidence={evidence_name}")
+        else:
+            print("\nERROR: Intrusion event was not saved")
+            if evidence_name:
+                image_path.unlink(missing_ok=True)
+
     def _display_frame(self, frame, results: dict):
         """Draw results on frame and display."""
         # Draw detections
         frame = self.frame_processor.draw_detections(frame, results.get("detections", []))
+        if self.intrusion is not None:
+            zx1, zy1, zx2, zy2 = self.intrusion.zone.pixels(frame.shape)
+            cv2.rectangle(frame, (zx1, zy1), (zx2, zy2), (0, 0, 255), 2)
+            cv2.putText(frame, "RESTRICTED ZONE", (zx1, max(20, zy1 - 8)),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 255), 2)
 
         # Draw tracks
         for track in results.get("tracks", []):
