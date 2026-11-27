@@ -16,6 +16,7 @@ from src.alerting.engine import AlertEngine
 from src.database.models import init_db, save_event, get_events
 from src.detection.event_policy import detection_signature, should_save_detection
 from src.detection.intrusion import RestrictedZone, IntrusionMonitor
+from src.detection.fall_pose import PoseFallDetector, FallConfig
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "surveillance.db"
@@ -84,6 +85,25 @@ class SurveillanceSystem:
                              cooldown_sec=intrusion_cfg.cooldown_seconds)
             if intrusion_cfg.enabled else None
         )
+
+        # Optional pose model: separate from YOLO object detection.
+        self.fall_detector = None
+        fall_cfg = self.config.fall_detection
+        if fall_cfg.enabled:
+            pose_path = Path(fall_cfg.model_path).expanduser()
+            if not pose_path.is_absolute():
+                pose_path = PROJECT_ROOT / pose_path
+            try:
+                self.fall_detector = PoseFallDetector(
+                    str(pose_path), device=device,
+                    config=FallConfig(
+                        confirmation_seconds=fall_cfg.confirmation_seconds,
+                        cooldown_seconds=fall_cfg.cooldown_seconds,
+                        min_drop_ratio=fall_cfg.min_drop_ratio,
+                    ),
+                )
+            except (FileNotFoundError, ImportError) as exc:
+                print(f"Fall detection disabled: {exc}")
 
         # Initialize rule engine
         self.rule_engine = RuleEngine()
@@ -259,6 +279,24 @@ class SurveillanceSystem:
                     "rule": "RESTRICTED_ZONE_INTRUSION", "severity": "high",
                 })
 
+        # Evaluate pose transitions: upright -> downward motion -> horizontal.
+        # A single lying/sitting pose must not create a fall alert.
+        if self.fall_detector is not None:
+            try:
+                fall_time = time.monotonic()
+                if self.camera.is_video_file and self.camera.cap is not None:
+                    media_ms = self.camera.cap.get(cv2.CAP_PROP_POS_MSEC)
+                    if media_ms > 0:
+                        fall_time = media_ms / 1000.0
+                falls = self.fall_detector.detect(frame, tracks, fall_time)
+                for fall in falls:
+                    self._record_fall(frame, fall)
+                    results["alerts"].append({
+                        "rule": "SUSPECTED_FALL", "severity": "high",
+                    })
+            except Exception as exc:
+                print(f"Fall model inference failed: {exc}")
+
         # Analyze behavior
         behaviors = self.behavior_analyzer.analyze(frame, detections, tracks)
         results["behaviors"] = behaviors
@@ -367,6 +405,44 @@ class SurveillanceSystem:
             print(f"\nINTRUSION saved: event_id={event_id}, evidence={evidence_name}")
         else:
             print("\nERROR: Intrusion event was not saved")
+            if evidence_name:
+                image_path.unlink(missing_ok=True)
+
+    def _record_fall(self, frame, fall):
+        """Save a high-severity suspected-fall event and its local evidence."""
+        from uuid import uuid4
+        evidence_dir = Path(self.db_path).parent / "evidence"
+        evidence_dir.mkdir(parents=True, exist_ok=True)
+        filename = f"fall_{uuid4().hex}.jpg"
+        image_path = evidence_dir / filename
+        annotated = frame.copy()
+        bbox = fall["bbox"]
+        x1, y1, x2, y2 = map(int, bbox)
+        cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 0, 255), 3)
+        cv2.putText(annotated, "SUSPECTED FALL - REVIEW REQUIRED",
+                    (10, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        evidence_name = filename if cv2.imwrite(str(image_path), annotated) else None
+        if evidence_name is None:
+            print("WARNING: Fall evidence screenshot could not be saved")
+        event_id = save_event(
+            db_path=self.db_path, event_type="alert", severity="high",
+            camera_id="cam1", frame_id=self.frame_count,
+            rule_name="SUSPECTED_FALL",
+            detections=[{
+                "class": "person", "track_id": int(fall["track_id"]),
+                "confidence": float(fall["confidence"]),
+                "bbox": [float(v) for v in bbox],
+            }],
+            metadata={
+                "track_id": int(fall["track_id"]),
+                "evidence_file": evidence_name,
+                "assessment": "Possible fall based on pose and temporal motion; unverified",
+            },
+        )
+        if event_id > 0:
+            print(f"\nSuspected fall saved: event_id={event_id}, evidence={evidence_name}")
+        else:
+            print("\nERROR: Failed to persist suspected-fall event")
             if evidence_name:
                 image_path.unlink(missing_ok=True)
 
