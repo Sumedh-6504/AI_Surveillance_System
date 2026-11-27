@@ -11,6 +11,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.database.models import init_db, get_events, get_statistics, cleanup_old_data
+from src.dashboard.evidence import resolve_evidence_path
 from src.dashboard.metrics import compute_threat_level
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -804,6 +805,12 @@ def main():
             event = next((e for e in visible_events if e["id"] == selected), None)
             if event:
                 st.json(event)
+                evidence_file = (event.get("metadata") or {}).get("evidence_file")
+                image_path = resolve_evidence_path(db_path, evidence_file)
+                if image_path is not None:
+                    st.image(str(image_path), caption=f"Incident evidence — event #{event['id']}", use_container_width=True)
+                elif evidence_file:
+                    st.warning("Evidence image is unavailable or its path is invalid.")
     else:
         st.markdown("""
         <div class="empty-state">
